@@ -2,7 +2,7 @@
 
 ## Windows C/C++ preview
 
-**当前 Windows 版尚未完全完成，后续将持续更新。** 目前为可运行预览版，仍有渲染性能、高级画布交互、AI 工具和格式兼容工作待完善；请以 [移植进度](windows/PORTING_STATUS.md) 为准。`artifacts` 是本地 EXE、便携包和测试产物目录，不上传到 Git 仓库。
+**当前 Windows 版尚未完全完成，后续将持续更新。** 目前为可运行预览版，仍有渲染性能、高级画布交互、AI 工具和格式兼容工作待完善；请以 [移植进度](windows/PORTING_STATUS.md) 为准。
 
 This fork includes a Windows migration preview built with C++20, Qt 6 and the original C pixel algorithms. See [Windows build, usage and migration status](windows/README.md). The Windows preview is still being developed and does not yet have full feature parity with the macOS application described below.
 
