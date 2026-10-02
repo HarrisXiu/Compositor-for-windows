@@ -15,9 +15,9 @@ jobs:
         run: |
           python -m pip install aqtinstall==3.3.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Avoid py7zr's intermittent Bad7zFile error on Windows (aqtinstall#995).
+          # Extract shared Qt directories sequentially with 7-Zip (aqtinstall#995).
           $taskSevenZip = (Get-Command 7z.exe -ErrorAction Stop).Source
-          python -m aqt install-qt windows desktop 6.10.2 win64_msvc2022_64 --outputdir .cache/Qt --external $taskSevenZip --archives qtbase qtsvg --modules qtimageformats
+          python -m aqt --config .github/aqt.ini install-qt windows desktop 6.10.2 win64_msvc2022_64 --outputdir .cache/Qt --external $taskSevenZip --archives qtbase qtsvg --modules qtimageformats
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build, test and package
         shell: pwsh

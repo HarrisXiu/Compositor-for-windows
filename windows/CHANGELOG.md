@@ -2,7 +2,7 @@
 
 ## 0.4
 
-- Use the Windows runner's external 7-Zip for Qt installation to avoid intermittent py7zr Bad7zFile failures; stop immediately if the installer dependency setup fails.
+- Install Qt packages sequentially with the Windows runner's external 7-Zip to avoid shared-directory extraction races and intermittent py7zr Bad7zFile failures; stop immediately if the installer dependency setup fails.
 - Split the editor into window, page/history, menus, layer panel, tool options and dialog modules; introduced concrete canvas tools with common event/overlay/cancellation hooks.
 - Moved selection, foreground/background colors, editing target and tool options into per-project session state. Added color swap/reset and Escape/temporary Space panning.
 - Added selection undo/redo for marquee/ellipse/lasso/wand, all/deselect/inverse and feather; crop/resize history restores the original selection.
