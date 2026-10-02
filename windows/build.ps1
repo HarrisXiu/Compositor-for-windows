@@ -54,6 +54,11 @@ try {
         if ((Get-FileHash -LiteralPath $taskLibRawArchive -Algorithm SHA256).Hash -ne 'AC64FA12BB00A7581332D4C6AB918C0533FB3F119D6B668D47A6875410DCA948') { throw 'LibRaw source archive SHA256 mismatch.' }
         $taskArtifactRoot = Join-Path $taskProjectRoot 'artifacts'
         $taskPackagePath = Join-Path $taskArtifactRoot 'Compositor-Windows-x64'
+        $taskPackagePath = [System.IO.Path]::GetFullPath($taskPackagePath)
+        $taskArtifactBoundary = [System.IO.Path]::GetFullPath($taskArtifactRoot).TrimEnd('\') + '\'
+        if (-not $taskPackagePath.StartsWith($taskArtifactBoundary, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Portable package path must stay inside artifacts.' }
+        # Start clean so files from an earlier deployment can't linger in the package.
+        if (Test-Path -LiteralPath $taskPackagePath) { Remove-Item -LiteralPath $taskPackagePath -Recurse -Force }
         New-Item -ItemType Directory -Path $taskPackagePath -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $taskBuildRoot "$Configuration\Compositor.exe") -Destination $taskPackagePath -Force
         Copy-Item -LiteralPath (Join-Path $LibRawRoot 'bin\libraw.dll') -Destination $taskPackagePath -Force
@@ -61,8 +66,15 @@ try {
         New-Item -ItemType Directory -Path $taskThirdPartySource -Force | Out-Null
         if (-not (Test-Path -LiteralPath $taskLibRawArchive)) { throw 'Include the matching LibRaw source archive for redistribution.' }
         Copy-Item -LiteralPath $taskLibRawArchive -Destination $taskThirdPartySource -Force
-        & (Join-Path $QtRoot 'bin\windeployqt.exe') --release --no-translations --compiler-runtime --no-opengl-sw $taskPackagePath
+        # generic (TUIO touch) is the only plugin that pulls in Qt Network, along with tls and networkinformation.
+        & (Join-Path $QtRoot 'bin\windeployqt.exe') --release --no-translations --compiler-runtime --no-opengl-sw --skip-plugin-types generic,networkinformation,tls $taskPackagePath
         if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed.' }
+        # Qt Core imports Windows' own ICU (System32, Windows 10 1703 and later); that copy is an OS file, not ours to redistribute.
+        foreach ($taskIcuName in @('icu.dll','icuuc.dll','icuin.dll')) {
+            $taskIcu = Join-Path $taskPackagePath $taskIcuName
+            if (Test-Path -LiteralPath $taskIcu) { Remove-Item -LiteralPath $taskIcu -Force }
+        }
+        if (Test-Path -LiteralPath (Join-Path $taskPackagePath 'Qt6Network.dll')) { throw 'Qt Network was deployed but the application does not use it.' }
         if (-not $taskVsRoot) {
             $taskVswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
             if (Test-Path -LiteralPath $taskVswhere) { $taskVsRoot = & $taskVswhere -products '*' -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
@@ -79,6 +91,9 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $taskPackagePath 'README.md') -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'PORTING_STATUS.md') -Destination $taskPackagePath -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CHANGELOG.md') -Destination $taskPackagePath -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ARCHITECTURE.md') -Destination $taskPackagePath -Force
+        $taskCurrentReport = Join-Path $PSScriptRoot '阶段报告-0.4.md'
+        if (Test-Path -LiteralPath $taskCurrentReport) { Copy-Item -LiteralPath $taskCurrentReport -Destination $taskPackagePath -Force }
         $taskStageReport = Join-Path $PSScriptRoot '阶段报告-0.3.md'
         if (Test-Path -LiteralPath $taskStageReport) { Copy-Item -LiteralPath $taskStageReport -Destination $taskPackagePath -Force }
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination $taskPackagePath -Force
@@ -87,6 +102,41 @@ try {
         Copy-Item -LiteralPath (Join-Path $LibRawRoot 'COPYRIGHT') -Destination (Join-Path $taskPackagePath 'licenses\LibRaw-COPYRIGHT.txt') -Force
         $taskSbom = Join-Path $QtRoot 'sbom'
         if (Test-Path -LiteralPath $taskSbom) { Copy-Item -LiteralPath $taskSbom -Destination $taskPackagePath -Recurse -Force }
+        # Qt's source is published beside the release (not inside the ZIP); its license texts go in the package.
+        $taskQtSourceCache = & (Join-Path $PSScriptRoot 'fetch-qt-source.ps1') -Destination (Join-Path $taskArtifactRoot 'qt-source')
+        foreach ($taskModule in @('qtbase','qtsvg','qtimageformats')) {
+            $taskExtract = Join-Path $taskBuildRoot "qt-licenses\$taskModule"
+            $taskExtract = [System.IO.Path]::GetFullPath($taskExtract)
+            $taskBuildBoundary = [System.IO.Path]::GetFullPath($taskBuildRoot).TrimEnd('\') + '\'
+            if (-not $taskExtract.StartsWith($taskBuildBoundary, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Qt license extraction path must stay inside the build directory.' }
+            if (Test-Path -LiteralPath $taskExtract) { Remove-Item -LiteralPath $taskExtract -Recurse -Force }
+            New-Item -ItemType Directory -Path $taskExtract -Force | Out-Null
+            & (Join-Path $env:SystemRoot 'System32\tar.exe') -xf (Join-Path $taskQtSourceCache "$taskModule-everywhere-src-6.10.2.tar.xz") -C $taskExtract "$taskModule-everywhere-src-6.10.2/LICENSES"
+            if ($LASTEXITCODE -ne 0) { throw "Cannot extract $taskModule license texts." }
+            Copy-Item -LiteralPath (Join-Path $taskExtract "$taskModule-everywhere-src-6.10.2\LICENSES") -Destination (Join-Path $taskPackagePath "licenses\Qt\$taskModule") -Recurse -Force
+        }
+        # A readable list of the third-party code inside the deployed Qt modules, taken from Qt's own SBOM.
+        # Bootstrap entries are build tools that never ship.
+        $taskAttributions = foreach ($taskSpdx in Get-ChildItem -LiteralPath (Join-Path $taskPackagePath 'sbom') -Filter '*.spdx.json') {
+            foreach ($taskEntry in (Get-Content -LiteralPath $taskSpdx.FullName -Raw -Encoding utf8 | ConvertFrom-Json).packages) {
+                if ($taskEntry.name -notmatch 'Attribution|^Bundled' -or $taskEntry.name -match '^Bootstrap') { continue }
+                $taskTitle = if ($taskEntry.comment -match '(?m)^\s*Name: (.+)$') { $Matches[1].Trim() } else { $taskEntry.name }
+                $taskUsage = if ($taskEntry.comment -match '(?m)^\s*Qt usage: (.+)$') { $Matches[1].Trim() } else { '' }
+                [pscustomobject]@{ Title = $taskTitle; Version = $taskEntry.versionInfo; License = $taskEntry.licenseConcluded; Usage = $taskUsage; Copyright = $taskEntry.copyrightText; Source = $taskEntry.downloadLocation }
+            }
+        }
+        $taskList = @("Third-party components in the deployed Qt 6.10.2 modules (qtbase, qtsvg, qtimageformats).",
+            "Generated from Qt's SBOM in sbom/; qtbase entries cover all of its modules, so this list is a superset of what ships.",
+            "License texts for each identifier are in licenses/Qt/<module>/. Qt's complete source is published beside each release.", '')
+        foreach ($taskItem in $taskAttributions | Sort-Object Title, Version -Unique) {
+            $taskList += "$($taskItem.Title) $($taskItem.Version)"
+            $taskList += "  License: $($taskItem.License)"
+            if ($taskItem.Usage) { $taskList += "  Qt usage: $($taskItem.Usage)" }
+            if ($taskItem.Copyright -and $taskItem.Copyright -ne 'NOASSERTION') { $taskList += ($taskItem.Copyright -split "`n" | ForEach-Object { "  $_" }) }
+            if ($taskItem.Source -and $taskItem.Source -ne 'NOASSERTION') { $taskList += "  Source: $($taskItem.Source)" }
+            $taskList += ''
+        }
+        $taskList | Set-Content -LiteralPath (Join-Path $taskPackagePath 'licenses\Qt-third-party-components.txt') -Encoding utf8
         $taskQtVersion = & (Join-Path $QtRoot 'bin\qmake.exe') -query QT_VERSION
         $taskAppVersion = (Select-String -LiteralPath (Join-Path $taskProjectRoot 'CMakeLists.txt') -Pattern 'project\(CompositorWindows VERSION ([^ ]+)').Matches.Groups[1].Value
         "Compositor version: $taskAppVersion`nQt version: $taskQtVersion`nLibRaw version: 0.22.2`nArchitecture: x64`nConfiguration: Release" | Set-Content -LiteralPath (Join-Path $taskPackagePath 'BUILD-INFO.txt') -Encoding utf8

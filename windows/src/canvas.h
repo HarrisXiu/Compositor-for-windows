@@ -1,55 +1,46 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "document.h"
+#include "editor_session.h"
 #include "warp_brush.h"
 #include <QPainterPath>
 #include <QWidget>
 #include <memory>
 
 namespace compositor {
-enum class Tool {
-    Move,
-    Brush,
-    Erase,
-    RectangleSelect,
-    EllipseSelect,
-    Lasso,
-    Wand,
-    Gradient,
-    Rectangle,
-    Ellipse,
-    Line,
-    Text,
-    Eyedropper,
-    Clone,
-    Heal,
-    Blur,
-    Smudge,
-    Liquify,
-    Pan,
-    Crop
-};
-
+class CanvasTool;
+class PaintTool;
+class SelectionTool;
+class ShapeTool;
+class MoveTool;
+class PanTool;
+class EyedropperTool;
+class WandTool;
+class TextTool;
 class Canvas : public QWidget {
     Q_OBJECT
   public:
     explicit Canvas(Document *document, QWidget *parent = nullptr);
-    Tool tool = Tool::Move;
-    QColor color = QColor(68, 157, 245);
-    double brushSize = 32;
-    double hardness = 0.8;
-    double brushOpacity = 1;
-    double blurRadius = 5;
-    bool paintMask = false;
-    double wandTolerance = 32;
-    bool wandContiguous = true;
+    Canvas(Document *document, EditorSession *session, QWidget *parent);
+    ~Canvas() override;
+    EditorSession &session() {
+        return *session_;
+    }
+    const EditorSession &session() const {
+        return *session_;
+    }
+    bool paintMask() const {
+        return session_->target == EditTarget::Mask;
+    }
     double zoom = 1;
-    QImage selection;
     void refresh();
     void fit();
     void clearSelection();
     void selectAll();
     void invertSelection();
+    void replaceSelection(const QImage &mask, const QString &label);
+    void featherSelection(double radius);
+    void cancelInteraction();
     QRect selectionBounds() const;
     void setTool(Tool value);
     QImage selectionForLayer(const Layer &layer) const;
@@ -61,6 +52,8 @@ class Canvas : public QWidget {
     void colorPicked(QColor color);
     void filesDropped(const QStringList &paths);
     void selectionChanged();
+    void selectionEdited(const QString &label, const QImage &before, const QImage &after);
+    void sessionChanged();
     void error(const QString &message);
 
   protected:
@@ -72,9 +65,17 @@ class Canvas : public QWidget {
     void wheelEvent(QWheelEvent *) override;
     void dragEnterEvent(QDragEnterEvent *) override;
     void dropEvent(QDropEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
+    void keyReleaseEvent(QKeyEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
   private:
     Document *document_;
+    EditorSession fallbackSession_;
+    EditorSession *session_;
+    std::unique_ptr<CanvasTool> controller_;
+    Tool controllerKind_ = Tool::Move;
+    bool temporaryPan_ = false;
     QImage preview_, original_, coverage_, priorSelection_, blurred_;
     std::unique_ptr<WarpBrush> warp_;
     bool warpChanged_ = false;
@@ -89,5 +90,18 @@ class Canvas : public QWidget {
     void dab(QPointF point);
     void finishSelection();
     void rebuildPreview();
+    CanvasTool &controller();
+    void beginPaint(QMouseEvent *event);
+    void continuePaint(QMouseEvent *event);
+    void finishPaint(QMouseEvent *event);
+    void drawGesture(QPainter &painter);
+    friend class PaintTool;
+    friend class SelectionTool;
+    friend class ShapeTool;
+    friend class MoveTool;
+    friend class PanTool;
+    friend class EyedropperTool;
+    friend class WandTool;
+    friend class TextTool;
 };
 } // namespace compositor

@@ -1,12 +1,16 @@
+#include "blend.h"
+#include "blend_reference.h"
 #include "camera_raw.h"
 #include "document.h"
 #include "effects.h"
 #include "filters.h"
 #include "render.h"
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QtTest>
 using namespace compositor;
@@ -434,6 +438,72 @@ class CoreTests : public QObject {
         auto p = renderDocument(d).pixelColor(0, 0);
         QVERIFY(std::abs(p.red() - 64) <= 1);
         QCOMPARE(p.alpha(), 255);
+    }
+    void optimizedBlendMatchesBaseline_data() {
+        QTest::addColumn<QString>("mode");
+        for (const auto &mode : compositor::blendModes())
+            QTest::newRow(qPrintable(mode)) << mode;
+    }
+    void optimizedBlendMatchesBaseline() {
+        QFETCH(QString, mode);
+        QRandomGenerator random(4703);
+        for (auto size : {QSize(17, 9), QSize(257, 259)}) {
+            QImage back(size, QImage::Format_RGBA8888_Premultiplied), front = back.copy();
+            for (int y = 0; y < size.height(); ++y)
+                for (int x = 0; x < size.width(); ++x) {
+                    auto pixel = [&] {
+                        auto alpha = (x % 7 == 0)   ? 0
+                                     : (x % 7 == 1) ? 255
+                                                    : int(random.bounded(256));
+                        return QColor(int(random.bounded(256)), int(random.bounded(256)),
+                                      int(random.bounded(256)), alpha);
+                    };
+                    back.setPixelColor(x, y, pixel());
+                    front.setPixelColor(x, y, pixel());
+                }
+            auto beforeBack = back.copy(), beforeFront = front.copy();
+            for (double opacity : {0.0, .13, .5, .73, 1.0}) {
+                auto expected = back;
+                blend_reference::referenceComposite(expected, front, mode, opacity);
+                auto actual = back;
+                composite(actual, front, parseBlendMode(mode), opacity);
+                QCOMPARE(actual, expected);
+                QCOMPARE(back, beforeBack);
+                QCOMPARE(front, beforeFront);
+            }
+        }
+    }
+    void compositingSupportsSharedSource() {
+        QImage image(257, 259, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(QColor(20, 170, 240, 128));
+        auto before = image.copy(), expected = image;
+        blend_reference::referenceComposite(expected, before, "Multiply", .7);
+        composite(image, image, BlendMode::Multiply, .7);
+        QCOMPARE(image, expected);
+    }
+    void blendTiming() {
+        if (!qEnvironmentVariableIsSet("COMPOSITOR_BENCHMARK"))
+            QSKIP("Set COMPOSITOR_BENCHMARK=1 to run the optional baseline comparison.");
+        QImage front(1600, 1000, QImage::Format_RGBA8888_Premultiplied);
+        front.fill(QColor(170, 55, 210, 128));
+        for (auto mode : {QString("Normal"), QString("Multiply")}) {
+            auto baseline = front.copy(), optimized = front.copy();
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < 5; ++i)
+                blend_reference::referenceComposite(baseline, front, mode, .73);
+            auto baselineNs = timer.nsecsElapsed();
+            timer.restart();
+            for (int i = 0; i < 5; ++i)
+                composite(optimized, front, parseBlendMode(mode), .73);
+            auto optimizedNs = timer.nsecsElapsed();
+            QCOMPARE(optimized, baseline);
+            qInfo().noquote() << QString("%1: baseline %2 ms, optimized %3 ms, speedup %4x")
+                                     .arg(mode)
+                                     .arg(baselineNs / 1e6, 0, 'f', 2)
+                                     .arg(optimizedNs / 1e6, 0, 'f', 2)
+                                     .arg(double(baselineNs) / optimizedNs, 0, 'f', 2);
+        }
     }
     void folderOpacityAndMask() {
         auto d = Document::create({2, 1});

@@ -1,5 +1,14 @@
 # Windows preview changes
 
+## 0.4
+
+- Split the editor into window, page/history, menus, layer panel, tool options and dialog modules; introduced concrete canvas tools with common event/overlay/cancellation hooks.
+- Moved selection, foreground/background colors, editing target and tool options into per-project session state. Added color swap/reset and Escape/temporary Space panning.
+- Added selection undo/redo for marquee/ellipse/lasso/wand, all/deselect/inverse and feather; crop/resize history restores the original selection.
+- Separated saved content identity from selection history so selection edits do not cause unsaved markers or close prompts, including background-save interactions.
+- Replaced blend-name comparisons inside pixel loops with enum dispatch; added a Normal path and row-parallel compositing with frozen-baseline pixel equivalence tests.
+- Kept .comp schema version 11, project MIT licensing and exclusion of automatic updates. Full parity and viewport/tile rendering remain incomplete.
+
 ## 0.3
 
 - Added native PSD/PSB import, layer/folder/mask/clipping conversion, supported adjustment conversion, editable horizontal type and basic live shapes, and conversion reports.

@@ -1,6 +1,6 @@
 # Compositor for Windows — C/C++ preview
 
-This is Windows migration preview 0.3, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
+**当前 Windows 版尚未完全完成，后续将持续更新。** This is Windows migration preview 0.4, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
 
 ## Run
 
@@ -20,7 +20,9 @@ From PowerShell at the repository root:
 .\windows\build.ps1 -QtRoot C:\Qt\6.10.2\msvc2022_64 -Package
 ```
 
-The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs five test suites, deploys the Qt/LibRaw DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
+The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs five test suites, deploys the Qt/LibRaw DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
+
+When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
 ## Implemented in this preview
 
@@ -31,7 +33,7 @@ The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures 
 - Brush and eraser with size, hardness, opacity, source-resolution painting, selection limits and mask painting; clone stamp and the original C content-aware spot-healing implementation.
 - Rectangle/ellipse/lasso selections, magic wand, selection addition/subtraction, invert and feather.
 - Gradient; editable rectangle/ellipse/line shapes; editable text with font, size, alignment, tracking, leading, paragraph bounds, and UTF-16 color/font runs; eyedropper, pan, zoom and fit. Select a layer and use **Layer > Edit Text / Edit Shape**. Existing PNGs remain the saved appearance until edited; Windows font substitution can change edited text when a Mac font is unavailable.
-- Undo/redo for document edits; fill/clear, crop, canvas size and copy merged/paste image.
+- Undo/redo for document and selection edits, including feather and selection restoration on crop/resize. Selection-only changes do not count as unsaved image content. Session colors and edit target are independent per project; X swaps foreground/background, D resets colors, Escape cancels a gesture and Space temporarily pans. Fill/clear, crop, canvas size and copy merged/paste image are available.
 - Invert, Exposure, per-channel Levels/Curves, per-color-range Hue/Saturation and Colorize, Black & White, Gradient Map, Color Balance, Gaussian/Motion Blur, Add Noise, Grain, Lens Correction, basic Camera Raw exposure and the original C Content-Aware Fill.
 - Create/edit all 12 adjustment kinds through **Layer > New Adjustment Layer / Edit Adjustment**. Folder masks/opacity and adjustment blend modes are applied; contiguous clipping stacks preserve the base's alpha. Filters and effects have modal previews and commit one undo entry.
 - All six layer effects: Stroke, Drop Shadow, Color Overlay, Inner Shadow, Outer Glow and Inner Glow. Effects follow the layer's masked source shape and transforms, with a bounded 64 MiB result cache. Use **Layer > Layer Effects** to edit, disable or remove them.

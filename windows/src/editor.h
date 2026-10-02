@@ -21,6 +21,7 @@ class EditorPage : public QWidget {
   public:
     explicit EditorPage(Document document, QWidget *parent = nullptr);
     Document document;
+    EditorSession session;
     Canvas *canvas;
     QUndoStack history;
     QString path;
@@ -28,14 +29,26 @@ class EditorPage : public QWidget {
     quint64 revision = 0;
     QStringList importNotes;
     void edit(const QString &label, const std::function<void(Document &)> &operation);
-    void record(const QString &label, const Document &before, const Document &after);
+    void record(const QString &label, const Document &before, const Document &after,
+                const QImage &beforeSelection, const QImage &afterSelection);
     void changed();
+    bool isModified() const {
+        return contentState != savedContentState_;
+    }
+    void markSaved(quint64 state);
+    quint64 contentState = 0;
+    bool interacting() const {
+        return interacting_;
+    }
   signals:
     void documentChanged();
     void error(const QString &message);
 
   private:
     Document beforeInteraction_;
+    QImage beforeSelection_;
+    quint64 nextContentState_ = 0;
+    quint64 savedContentState_ = 0;
     bool interacting_ = false;
 };
 
@@ -59,7 +72,9 @@ class EditorWindow : public QMainWindow {
     QPushButton *colorButton_;
     bool syncing_ = false;
     Tool tool_ = Tool::Move;
-    QColor color_ = QColor(68, 157, 245);
+    QDoubleSpinBox *blurRadius_, *tolerance_;
+    QCheckBox *contiguous_;
+    QPushButton *backgroundButton_;
     EditorPage *page() const;
     void addPage(Document document, const QString &path = {});
     void createDocument();
@@ -85,5 +100,7 @@ class EditorWindow : public QMainWindow {
                     const std::function<void()> &callback);
     void buildMenus();
     void buildPanels();
+    void buildToolOptions();
+    void syncToolOptions();
 };
 } // namespace compositor

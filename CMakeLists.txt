@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CompositorWindows VERSION 0.3.0 LANGUAGES C CXX)
+project(CompositorWindows VERSION 0.4.0 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
@@ -35,12 +35,15 @@ if(MSVC)
 endif()
 
 add_library(compositor_core STATIC
-    windows/src/document.cpp windows/src/render.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
+    windows/src/document.cpp windows/src/render.cpp windows/src/blend.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
 target_include_directories(compositor_core PUBLIC windows/src)
-target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg compositor_pixels LibRaw)
+target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)
 
 add_library(compositor_ui STATIC
-    windows/src/editor.cpp windows/src/editor.h
+    windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp
+    windows/src/editor_menus.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
+    windows/src/document_dialogs.cpp windows/src/filter_dialogs.cpp windows/src/effect_dialogs.cpp
+    windows/src/editable_dialogs.cpp windows/src/canvas_tools.cpp windows/src/canvas_paint.cpp
     windows/src/canvas.cpp windows/src/canvas.h windows/src/curve_editor.cpp windows/src/raw_dialog.cpp windows/src/image_scope.cpp windows/src/language.cpp windows/src/language.h)
 qt_add_resources(compositor_ui translations PREFIX "/translations" BASE "windows/translations"
     FILES windows/translations/zh_CN.json windows/translations/ja_JP.json)

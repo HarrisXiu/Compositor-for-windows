@@ -15,7 +15,7 @@
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
     app.setApplicationName("Compositor");
-    app.setApplicationVersion("0.3.0");
+    app.setApplicationVersion("0.4.0");
     app.setOrganizationName("Compositor");
     compositor::UiLanguage::instance().initialize();
     app.setStyle(QStyleFactory::create("Fusion"));
