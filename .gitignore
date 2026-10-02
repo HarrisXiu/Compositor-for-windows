@@ -22,3 +22,8 @@ xcuserdata/
 # Claude Code settings personal to this machine
 .claude/settings.local.json
 BUILD_PLAN.md
+
+# Windows build and local dependency cache
+/.cache/
+/artifacts/
+/aqtinstall.log

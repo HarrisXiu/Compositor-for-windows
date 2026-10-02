@@ -1,0 +1,708 @@
+#include "editable_layers.h"
+#include "editor.h"
+#include "image_scope.h"
+#include "language.h"
+#include "raw_dialog.h"
+#include "raw_fixture.h"
+#include <QAction>
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QFile>
+#include <QJsonArray>
+#include <QLabel>
+#include <QMenuBar>
+#include <QPushButton>
+#include <QScopeGuard>
+#include <QSettings>
+#include <QTabWidget>
+#include <QTemporaryDir>
+#include <QTextEdit>
+#include <QTimer>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+#include <QtTest>
+#include <cmath>
+#include <numeric>
+using namespace compositor;
+class UiTests : public QObject {
+    Q_OBJECT
+  private slots:
+    void init() {
+        UiLanguage::instance().setLanguage("en", false);
+    }
+    void cleanup() {
+        UiLanguage::instance().setLanguage("en", false);
+    }
+    void scopeCountsCoverageAndIgnoresTransparentPixels() {
+        QImage pixels(3, 1, QImage::Format_ARGB32_Premultiplied);
+        pixels.fill(Qt::transparent);
+        pixels.setPixelColor(0, 0, Qt::black);
+        pixels.setPixelColor(1, 0, QColor(255, 0, 0, 128));
+        ImageScope scope;
+        scope.setImage(pixels);
+        QVERIFY(std::abs(scope.histograms[0][255] - 128.0 / 255) < 1e-6);
+        QCOMPARE(scope.histograms[0][0], 1.0);
+        double sum = std::accumulate(scope.vectors.begin(), scope.vectors.end(), 0.0);
+        QVERIFY(std::abs(sum - 128.0 / 255) < 1e-6);
+    }
+    void cameraRawAutoWhiteBalanceCompletes() {
+        QTemporaryDir dir;
+        auto d = Document::create({24, 24});
+        QImage image(24, 24, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(QColor(120, 110, 100));
+        d.addImage("Photo", image);
+        auto path = dir.filePath("WhiteBalance.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QAction *filter = nullptr;
+        for (auto action : window.findChildren<QAction *>())
+            if (action->text() == "Camera Raw…")
+                filter = action;
+        QVERIFY(filter);
+        bool visited = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            auto autoBalance = dialog->findChild<QPushButton *>("autoWhiteBalance");
+            QVERIFY(autoBalance);
+            autoBalance->click();
+            QTRY_VERIFY_WITH_TIMEOUT(autoBalance->isEnabled(), 3000);
+            auto temperature = dialog->findChild<QDoubleSpinBox *>("temperatureControl");
+            QVERIFY(temperature && temperature->value() < 0);
+            visited = true;
+            dialog->accept();
+        });
+        filter->trigger();
+        QVERIFY(visited);
+        QCOMPARE(page->history.count(), 1);
+        auto neutral = page->document.active()->image.pixelColor(12, 12);
+        QVERIFY(std::abs(neutral.red() - neutral.green()) <= 1 &&
+                std::abs(neutral.green() - neutral.blue()) <= 1);
+        page->history.undo();
+        QCOMPARE(page->document.active()->image, image);
+    }
+    void cameraRawSamplingAndGuidesInJapanese() {
+        QTemporaryDir dir;
+        auto d = Document::create({32, 32});
+        QImage pixels(32, 32, QImage::Format_RGBA8888_Premultiplied);
+        for (int y = 0; y < 32; ++y)
+            for (int x = 0; x < 32; ++x)
+                pixels.setPixelColor(x, y, x < 16 ? Qt::red : Qt::blue);
+        d.addImage("Pixels", pixels);
+        auto path = dir.filePath("Sampling.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        window.show();
+        UiLanguage::instance().setLanguage("ja_JP", false);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QAction *filter = nullptr;
+        for (auto action : window.findChildren<QAction *>())
+            if (action->property("_uiSource_text").toString() == "Camera Raw…")
+                filter = action;
+        QVERIFY(filter);
+        bool sampled = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            auto tool = dialog->findChild<QComboBox *>("cameraPreviewTool");
+            auto preview = dialog->findChild<QLabel *>("filterPreview");
+            auto point = dialog->findChild<QComboBox *>("pointColorList");
+            QVERIFY(tool && preview && point);
+            selectComboValue(tool, "Sample point color");
+            QCOMPARE(comboValue(tool), QString("Sample point color"));
+            QTest::mouseClick(preview, Qt::LeftButton, Qt::NoModifier,
+                              preview->rect().center() - QPoint(60, 0));
+            QCOMPARE(point->count(), 1);
+            auto saturation = dialog->findChild<QDoubleSpinBox *>("pointSaturationShiftControl");
+            QVERIFY(saturation && saturation->isEnabled());
+            saturation->setValue(-100);
+            sampled = true;
+            dialog->accept();
+        });
+        filter->trigger();
+        QVERIFY(sampled);
+        QCOMPARE(page->history.count(), 1);
+        auto color = page->document.active()->image.pixelColor(8, 16);
+        QVERIFY(color.hslSaturationF() < .01);
+        QCOMPARE(page->document.active()->image.pixelColor(24, 16), QColor(Qt::blue));
+        auto afterColor = page->document.active()->image;
+        bool guided = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (!dialog)
+                return;
+            auto tool = dialog->findChild<QComboBox *>("cameraPreviewTool");
+            auto preview = dialog->findChild<QLabel *>("filterPreview");
+            selectComboValue(tool, "Draw geometry guides");
+            auto center = preview->rect().center();
+            QTest::mousePress(preview, Qt::LeftButton, Qt::NoModifier, center - QPoint(60, 15));
+            QTest::mouseMove(preview, center + QPoint(60, 15));
+            QTest::mouseRelease(preview, Qt::LeftButton, Qt::NoModifier, center + QPoint(60, 15));
+            auto upright = dialog->findChild<QCheckBox *>("geometryUprightControl");
+            QVERIFY(upright && upright->isChecked());
+            guided = true;
+            dialog->accept();
+        });
+        filter->trigger();
+        QVERIFY(guided);
+        QCOMPARE(page->history.count(), 2);
+        QVERIFY(page->document.active()->image != afterColor);
+        QCOMPARE(page->document.active()->image.pixelColor(0, 0).alpha(), 0);
+        page->history.undo();
+        QCOMPARE(page->document.active()->image, afterColor);
+        page->history.undo();
+        QCOMPARE(page->document.active()->image, pixels);
+    }
+    void liveLanguagesPreserveDocumentAndCanonicalValues() {
+        EditorWindow window;
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        page->edit("Pixels", [](Document &d) { d.addBlank("Language"); });
+        auto before = page->document.manifest();
+        int history = page->history.count();
+        window.show();
+        UiLanguage::instance().setLanguage("zh_CN", false);
+        QVERIFY(window.menuBar()->actions().first()->text().startsWith("文件"));
+        auto blend = window.findChild<QComboBox *>();
+        QVERIFY(blend);
+        QCOMPARE(comboValue(blend), QString("Normal"));
+        QCOMPARE(blend->currentText(), QString("正常"));
+        QCOMPARE(page->document.manifest(), before);
+        QCOMPARE(page->history.count(), history);
+        UiLanguage::instance().setLanguage("ja_JP", false);
+        QVERIFY(window.menuBar()->actions().first()->text().startsWith("ファイル"));
+        QCOMPARE(blend->currentText(), QString("通常"));
+        QCOMPARE(page->document.active()->name(), QString("Language"));
+        selectComboValue(blend, "Multiply");
+        QCOMPARE(blend->currentText(), QString("乗算"));
+        QCOMPARE(page->document.active()->blend(), QString("Multiply"));
+        auto action = window.findChild<QAction *>("language_ja_JP");
+        QVERIFY(action && action->isChecked());
+        QDialog dialog;
+        QVBoxLayout layout(&dialog);
+        QLabel label("Exposure");
+        layout.addWidget(&label);
+        dialog.show();
+        QTest::qWait(10);
+        QCOMPARE(label.text(), QString("露光量"));
+        UiLanguage::instance().setLanguage("en", false);
+        QCOMPARE(label.text(), QString("Exposure"));
+        QCOMPARE(blend->currentText(), QString("Multiply"));
+        QCOMPARE(window.menuBar()->actions().first()->text(), QString("&File"));
+        page->history.undo();
+        QCOMPARE(page->document.active()->blend(), QString("Normal"));
+    }
+    void languagePreferencePersists() {
+        QTemporaryDir dir;
+        auto previous = QSettings::defaultFormat();
+        auto organization = QCoreApplication::organizationName();
+        auto restore = qScopeGuard([previous, organization] {
+            QSettings::setDefaultFormat(previous);
+            QCoreApplication::setOrganizationName(organization);
+        });
+        QCoreApplication::setOrganizationName("CompositorTests");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir.path());
+        UiLanguage::instance().setLanguage("ja_JP");
+        QSettings saved;
+        saved.sync();
+        QCOMPARE(saved.status(), QSettings::NoError);
+        QVERIFY(QFileInfo::exists(saved.fileName()));
+        QCOMPARE(QSettings().value("ui/language").toString(), QString("ja_JP"));
+        UiLanguage::instance().setLanguage("en", false);
+        UiLanguage::instance().initialize();
+        QCOMPARE(UiLanguage::instance().code(), QString("ja_JP"));
+        QSettings::setDefaultFormat(previous);
+    }
+    void switchingToolCancelsStroke() {
+        auto d = Document::create({64, 64});
+        d.addBlank("Pixels");
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->setTool(Tool::Brush);
+        c->color = Qt::red;
+        auto before = page.document.active()->image;
+        QSignalSpy errors(&page, &EditorPage::error);
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, c->rect().center());
+        QVERIFY(page.document.active()->image != before);
+        c->setTool(Tool::Move);
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, c->rect().center());
+        QCOMPARE(errors.count(), 0);
+        QCOMPARE(page.document.active()->image, before);
+        QCOMPARE(page.history.count(), 0);
+        c->setTool(Tool::Smudge);
+        QTest::mouseClick(c, Qt::LeftButton, Qt::NoModifier, c->rect().center());
+        QCOMPARE(page.history.count(), 0);
+    }
+    void ditherAndAdvancedFiltersCommitUndo() {
+        auto d = Document::create({24, 24});
+        QImage image(24, 24, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(QColor(120, 120, 120));
+        d.addImage("Pixels", image);
+        QTemporaryDir dir;
+        auto path = dir.filePath("Filters.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        for (auto kind : {"Dither", "Vignette", "Tonal Contrast", "Camera Raw"}) {
+            QAction *action = nullptr;
+            for (auto a : window.findChildren<QAction *>())
+                if (a->text() == QString(kind) + "…")
+                    action = a;
+            QVERIFY(action);
+            bool visited = false;
+            QTimer::singleShot(20, [&] {
+                auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                if (!dialog)
+                    return;
+                visited = true;
+                if (QString(kind) == "Camera Raw") {
+                    auto spin = dialog->findChild<QDoubleSpinBox *>("exposureControl");
+                    QVERIFY(spin);
+                    spin->setValue(1);
+                }
+                dialog->accept();
+            });
+            auto before = page->document.active()->image;
+            int count = page->history.count();
+            action->trigger();
+            QVERIFY(visited);
+            if (QString(kind) != "Tonal Contrast")
+                QVERIFY(page->document.active()->image != before);
+            QCOMPARE(page->history.count(), count + 1);
+            page->history.undo();
+            QCOMPARE(page->document.active()->image, before);
+            page->history.redo();
+        }
+    }
+    void warpBrushesUndoSelectionAndAlpha_data() {
+        QTest::addColumn<int>("tool");
+        QTest::newRow("Smudge") << int(Tool::Smudge);
+        QTest::newRow("Liquify") << int(Tool::Liquify);
+        QTest::newRow("Blur") << int(Tool::Blur);
+    }
+    void warpBrushesUndoSelectionAndAlpha() {
+        QFETCH(int, tool);
+        auto d = Document::create({64, 64});
+        QImage image(64, 64, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::transparent);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 32; ++x)
+                image.setPixelColor(x, y, QColor(255, 0, 0, 128));
+        d.addImage("Pixels", image);
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->tool = Tool(tool);
+        c->brushSize = 20;
+        c->hardness = 1;
+        c->brushOpacity = 1;
+        c->selection = QImage(64, 64, QImage::Format_Grayscale8);
+        c->selection.fill(0);
+        for (int y = 20; y < 44; ++y)
+            std::fill_n(c->selection.scanLine(y) + 20, 24, uchar(255));
+        QSignalSpy errors(&page, &EditorPage::error);
+        auto center = c->rect().center();
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, center - QPoint(7, 0));
+        QTest::mouseMove(c, center + QPoint(7, 0));
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, center + QPoint(7, 0));
+        QCOMPARE(errors.count(), 0);
+        QCOMPARE(page.history.count(), 1);
+        auto after = page.document.active()->image;
+        QVERIFY(after != image);
+        QCOMPARE(after.pixelColor(50, 32), image.pixelColor(50, 32));
+        QCOMPARE(after.pixelColor(30, 10), image.pixelColor(30, 10));
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                auto p = after.constScanLine(y) + x * 4;
+                QVERIFY(p[0] <= p[3] && p[1] <= p[3] && p[2] <= p[3]);
+            }
+        page.history.undo();
+        QCOMPARE(page.document.active()->image, image);
+        page.history.redo();
+        QCOMPARE(page.document.active()->image, after);
+    }
+    void blurFolderMask() {
+        auto d = Document::create({64, 64});
+        d.addGroup("Folder");
+        d.active()->mask = QImage(64, 64, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        for (int y = 0; y < 64; ++y)
+            std::fill_n(d.active()->mask.scanLine(y), 32, uchar(0));
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->tool = Tool::Blur;
+        c->paintMask = true;
+        c->brushSize = 20;
+        c->blurRadius = 4;
+        QSignalSpy errors(&page, &EditorPage::error);
+        QTest::mouseClick(c, Qt::LeftButton, Qt::NoModifier, c->rect().center());
+        QCOMPARE(errors.count(), 0);
+        QVERIFY(page.document.active()->mask.constScanLine(32)[31] > 0);
+        QCOMPARE(page.document.active()->mask.constScanLine(0)[60], uchar(255));
+        page.history.undo();
+        QCOMPARE(page.document.active()->mask.constScanLine(32)[31], uchar(0));
+    }
+    void rawDevelopmentImportAndCancel() {
+        QTemporaryDir dir;
+        auto path = dir.filePath("照片.dng");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(dngFixture());
+        f.close();
+        auto source = RawSource::open(path);
+        auto settings = source->asShot();
+        settings.exposure = -1.5;
+        auto expected = source->develop(settings);
+        RawDevelopDialog dialog(path);
+        dialog.show();
+        auto buttons = dialog.findChild<QDialogButtonBox *>();
+        QVERIFY(buttons);
+        QTRY_VERIFY_WITH_TIMEOUT(buttons->button(QDialogButtonBox::Ok)->isEnabled(), 10000);
+        dialog.findChild<QDoubleSpinBox *>("exposureControl")->setValue(2);
+        dialog.findChild<QDoubleSpinBox *>("temperatureControl")->setValue(9000);
+        buttons->button(QDialogButtonBox::Reset)->click();
+        QCOMPARE(dialog.findChild<QDoubleSpinBox *>("exposureControl")->value(), 0.0);
+        QCOMPARE(dialog.findChild<QDoubleSpinBox *>("temperatureControl")->value(), 5000.0);
+        dialog.findChild<QDoubleSpinBox *>("exposureControl")->setValue(-1.5);
+        buttons->button(QDialogButtonBox::Ok)->click();
+        QTRY_COMPARE_WITH_TIMEOUT(dialog.result(), int(QDialog::Accepted), 10000);
+        QCOMPARE(dialog.importedImage(), expected);
+        RawDevelopDialog cancel(path);
+        cancel.show();
+        cancel.reject();
+        QVERIFY(cancel.importedImage().isNull());
+    }
+    void adjustmentChannelEditUndo() {
+        QTemporaryDir temp;
+        auto d = Document::create({16, 16});
+        d.addBlank("Pixels");
+        auto path = temp.filePath("Adjustment.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QAction *create = nullptr, *edit = nullptr;
+        for (auto action : window.findChildren<QAction *>()) {
+            if (action->text() == "Levels…" && !create)
+                create = action;
+            if (action->text() == "Edit Adjustment…")
+                edit = action;
+        }
+        QVERIFY(create && edit);
+        bool visited = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                visited = true;
+                auto spins = dialog->findChildren<QDoubleSpinBox *>();
+                if (!spins.isEmpty())
+                    spins.first()->setValue(20);
+                dialog->accept();
+            }
+        });
+        create->trigger();
+        QVERIFY(visited);
+        QCOMPARE(page->document.layers.size(), 2);
+        auto settings = page->document.active()
+                            ->metadata.value("adjustment")
+                            .toObject()
+                            .value("levels")
+                            .toObject();
+        QCOMPARE(settings.value("ranges").toArray()[0].toObject().value("black").toInt(), 20);
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                auto combo = dialog->findChild<QComboBox *>();
+                auto spins = dialog->findChildren<QDoubleSpinBox *>();
+                if (combo && !spins.isEmpty()) {
+                    combo->setCurrentText("Blue");
+                    spins.first()->setValue(40);
+                }
+                dialog->accept();
+            }
+        });
+        edit->trigger();
+        settings = page->document.active()
+                       ->metadata.value("adjustment")
+                       .toObject()
+                       .value("levels")
+                       .toObject();
+        QCOMPARE(settings.value("ranges").toArray()[3].toObject().value("black").toInt(), 40);
+        QCOMPARE(settings.value("ranges").toArray()[0].toObject().value("black").toInt(), 20);
+        page->history.undo();
+        settings = page->document.active()
+                       ->metadata.value("adjustment")
+                       .toObject()
+                       .value("levels")
+                       .toObject();
+        QCOMPARE(settings.value("ranges").toArray()[3].toObject().value("black").toInt(), 0);
+        page->history.undo();
+        QCOMPARE(page->document.layers.size(), 1);
+    }
+    void layerEffectEditUndo() {
+        QTemporaryDir temp;
+        auto d = Document::create({16, 16});
+        d.addBlank("Pixels");
+        auto path = temp.filePath("Effect.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QAction *stroke = nullptr;
+        for (auto action : window.findChildren<QAction *>())
+            if (action->text() == "Stroke…")
+                stroke = action;
+        QVERIFY(stroke);
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                auto spins = dialog->findChildren<QDoubleSpinBox *>();
+                if (spins.size() > 1)
+                    spins[1]->setValue(2);
+                dialog->accept();
+            }
+        });
+        stroke->trigger();
+        QCOMPARE(page->document.active()
+                     ->metadata.value("effects")
+                     .toObject()
+                     .value("stroke")
+                     .toObject()
+                     .value("size")
+                     .toDouble(),
+                 2.0);
+        page->history.undo();
+        QVERIFY(!page->document.active()->metadata.contains("effects"));
+    }
+    void richTextUtf16RoundTrip() {
+        QJsonObject style{
+            {"content", QString::fromUtf8("A😀中文")},
+            {"fontName", "Segoe UI"},
+            {"fontSize", 24},
+            {"red", 0},
+            {"green", 0},
+            {"blue", 0},
+            {"colorRuns",
+             QJsonArray{QJsonObject{
+                 {"location", 1}, {"length", 2}, {"red", 1}, {"green", 0}, {"blue", 0}}}},
+            {"fontRuns",
+             QJsonArray{QJsonObject{{"location", 3}, {"length", 2}, {"fontName", "Arial"}}}}};
+        QTextDocument document;
+        loadTextDocument(document, style);
+        auto out = textStyleFromDocument(document, style);
+        QCOMPARE(out.value("content"), style.value("content"));
+        auto runs = out.value("colorRuns").toArray();
+        QCOMPARE(runs.size(), 1);
+        QCOMPARE(runs[0].toObject().value("location").toInt(), 1);
+        QCOMPARE(runs[0].toObject().value("length").toInt(), 2);
+        QVERIFY(!renderText(out).isNull());
+    }
+    void textEditingUndo() {
+        QTemporaryDir temp;
+        auto d = Document::create({128, 64});
+        QJsonObject style{{"content", "Before"}, {"fontName", "Segoe UI"},
+                          {"fontSize", 20},      {"red", 1},
+                          {"green", 0},          {"blue", 0}};
+        d.addImage("Text", renderText(style));
+        d.active()->metadata["text"] = style;
+        auto path = temp.filePath("Text.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto page = qobject_cast<EditorPage *>(window.findChild<QTabWidget *>()->currentWidget());
+        QAction *edit = nullptr;
+        for (auto a : window.findChildren<QAction *>())
+            if (a->text() == "Edit Text…")
+                edit = a;
+        QVERIFY(edit);
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                auto text = dialog->findChild<QTextEdit *>();
+                if (text) {
+                    text->selectAll();
+                    text->insertPlainText("After");
+                }
+                dialog->accept();
+            }
+        });
+        edit->trigger();
+        QCOMPARE(
+            page->document.active()->metadata.value("text").toObject().value("content").toString(),
+            QString("After"));
+        page->history.undo();
+        QCOMPARE(
+            page->document.active()->metadata.value("text").toObject().value("content").toString(),
+            QString("Before"));
+    }
+    void windowLayerSelectionAndOpacity() {
+        QTemporaryDir temp;
+        auto d = Document::create({32, 32});
+        QImage image(32, 32, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::red);
+        auto first = d.addImage("First", image);
+        d.addImage("Second", image);
+        auto path = temp.filePath("Window.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        window.show();
+        QTest::qWait(30);
+        auto tabs = window.findChild<QTabWidget *>();
+        auto page = qobject_cast<EditorPage *>(tabs->currentWidget());
+        auto tree = window.findChild<QTreeWidget *>();
+        QVERIFY(tree);
+        QCOMPARE(tree->topLevelItemCount(), 2);
+        auto item = tree->topLevelItem(1);
+        auto target = tree->visualItemRect(item).center();
+        QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, target);
+        QCOMPARE(page->document.activeId(), first);
+        QDoubleSpinBox *opacity = nullptr;
+        for (auto spin : window.findChildren<QDoubleSpinBox *>())
+            if (spin->suffix().contains("opacity"))
+                opacity = spin;
+        QVERIFY(opacity);
+        opacity->setValue(50);
+        QMetaObject::invokeMethod(opacity, "editingFinished", Qt::DirectConnection);
+        QCOMPARE(page->document.active()->opacity(), 0.5);
+        page->history.undo();
+        QCOMPARE(page->document.active()->opacity(), 1.0);
+    }
+    void filterPreviewCancelPreservesDocument() {
+        QTemporaryDir temp;
+        auto d = Document::create({32, 32});
+        QImage image(32, 32, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(QColor(100, 120, 140));
+        d.addImage("Image", image);
+        auto path = temp.filePath("Filter.comp");
+        saveProject(d, path);
+        EditorWindow window;
+        window.openPath(path);
+        auto tabs = window.findChild<QTabWidget *>();
+        auto page = qobject_cast<EditorPage *>(tabs->currentWidget());
+        auto before = page->document.active()->image;
+        QAction *exposure = nullptr;
+        for (auto action : window.findChildren<QAction *>())
+            if (action->text().startsWith("Exposure"))
+                exposure = action;
+        QVERIFY(exposure);
+        bool visited = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (dialog) {
+                visited = true;
+                auto spins = dialog->findChildren<QDoubleSpinBox *>();
+                if (!spins.isEmpty())
+                    spins.first()->setValue(2);
+                QTimer::singleShot(150, dialog, &QDialog::reject);
+            }
+        });
+        exposure->trigger();
+        QVERIFY(visited);
+        QCOMPARE(page->history.count(), 0);
+        QCOMPARE(page->document.active()->image, before);
+    }
+    void brushStrokeUndoRedo() {
+        auto document = Document::create({64, 64});
+        document.addBlank("Paint");
+        EditorPage page(document);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto canvas = page.canvas;
+        canvas->zoom = 1;
+        canvas->tool = Tool::Brush;
+        canvas->brushSize = 10;
+        canvas->hardness = 1;
+        canvas->color = Qt::red;
+        QSignalSpy errors(&page, &EditorPage::error);
+        auto center = canvas->rect().center();
+        QTest::mousePress(canvas, Qt::LeftButton, Qt::NoModifier, center);
+        QTest::mouseMove(canvas, center + QPoint(10, 0));
+        QTest::mouseRelease(canvas, Qt::LeftButton, Qt::NoModifier, center + QPoint(10, 0));
+        QCOMPARE(errors.count(), 0);
+        QCOMPARE(page.history.count(), 1);
+        QVERIFY(page.document.active()->image.pixelColor(32, 32).alpha() > 0);
+        page.history.undo();
+        QCOMPARE(page.document.active()->image.pixelColor(32, 32).alpha(), 0);
+        page.history.redo();
+        QVERIFY(page.document.active()->image.pixelColor(32, 32).alpha() > 0);
+    }
+    void eraseAndMaskStroke() {
+        auto d = Document::create({64, 64});
+        QImage image(64, 64, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::red);
+        d.addImage("Image", image);
+        d.active()->mask = QImage(64, 64, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->tool = Tool::Erase;
+        c->paintMask = true;
+        c->brushSize = 20;
+        c->hardness = 1;
+        auto center = c->rect().center();
+        QTest::mouseClick(c, Qt::LeftButton, Qt::NoModifier, center);
+        QCOMPARE(page.document.active()->mask.constScanLine(32)[32], uchar(0));
+        QCOMPARE(page.document.active()->image.pixelColor(32, 32), QColor(Qt::red));
+        page.history.undo();
+        QCOMPARE(page.document.active()->mask.constScanLine(32)[32], uchar(255));
+    }
+    void selectionInDocumentCoordinates() {
+        auto d = Document::create({64, 64});
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 2;
+        c->tool = Tool::RectangleSelect;
+        auto center = c->rect().center();
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, center - QPoint(20, 20));
+        QTest::mouseMove(c, center + QPoint(20, 20));
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, center + QPoint(20, 20));
+        QVERIFY(!c->selection.isNull());
+        QVERIFY(c->selection.constScanLine(32)[32] > 0);
+        QCOMPARE(c->selection.constScanLine(0)[0], uchar(0));
+        QCOMPARE(page.history.count(), 0);
+    }
+    void failedEditRollsBack() {
+        auto d = Document::create({4, 4});
+        EditorPage page(d);
+        auto before = page.document.manifest();
+        QSignalSpy errors(&page, &EditorPage::error);
+        page.edit("Bad edit", [](Document &document) { document.metadata["width"] = 0; });
+        QCOMPARE(errors.count(), 1);
+        QCOMPARE(page.document.manifest(), before);
+        QCOMPARE(page.history.count(), 0);
+    }
+};
+QTEST_MAIN(UiTests)
+#include "ui_tests.moc"

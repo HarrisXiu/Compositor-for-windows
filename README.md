@@ -1,5 +1,11 @@
 # Compositor
 
+## Windows C/C++ preview
+
+This fork includes a Windows migration preview built with C++20, Qt 6 and the original C pixel algorithms. See [Windows build, usage and migration status](windows/README.md). The Windows preview is still being developed and does not yet have full feature parity with the macOS application described below.
+
+The project and Windows port remain MIT licensed. Automatic updating is excluded from the Windows port; all other original features remain in its migration scope. Qt, LibRaw and Microsoft runtime components retain their respective third-party licenses.
+
 Adobe Photoshop costs too much and tools like GIMP don’t feel familiar enough for me to stay in flow. That’s why I built Compositor.
 
 The goal was to create a full-featured image editor that is completely free and open source. I used to use Photoshop for compositing and post-processing, so Compositor is built around that workflow - with the tools needed to create a pixel-perfect final image.
