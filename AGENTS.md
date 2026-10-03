@@ -13,3 +13,11 @@ If you've been asked to make or change an image in a `.comp` project, you don't 
 - Match the surrounding code: its naming, its comment style and density.
 - American spelling in code, comments and UI ("color", not "colour").
 - The project file format is described in [docs/project-format.md](docs/project-format.md). A change to what's saved means a format version bump there and in `ProjectManifest.current`.
+
+## Windows offline AI model tooling
+
+- Python 3.12 export dependencies are pinned in `windows/model-export-requirements.txt`; use an isolated environment when setting them up. This tooling does not add Python to the application runtime.
+- Tooling tests: `python -B windows/tests/model_export_tests.py`. They do not require downloading model weights.
+- Export and compare: `python -B windows/export_models.py --model birefnet`, `--model sam2`, or `--model mobilesam`. Source/weight revisions are pinned; defaults cache under `.cache/` and write separate timestamped folders under `artifacts/ai1/`.
+- Recheck existing graphs with `--verify-only --output <folder>`. Reports contain graph signatures, SHA256 hashes and per-case checks; preserve the generated model license files. Keep models/cache artifacts out of Git.
+- Passing CPU FP32 export checks is not DirectML, ground-truth segmentation-quality or Mac parity acceptance. C++ inference integration and application AI tools remain separate tasks. See `windows/README.md` for the detailed contract and scope.

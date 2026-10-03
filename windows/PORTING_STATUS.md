@@ -16,7 +16,7 @@ Target: preserve the original Compositor workflow and project format in a C11/C+
 | Languages | Live Simplified Chinese, English and Japanese; remembered choice, canonical parameter values and document content preserved | Remaining decoder/conversion diagnostics; native system-dialog language follows Windows |
 | View / layout | Pan/zoom/fit, imported guides | Rulers, guide editing, snapping, grids, transform handles |
 | File formats | Qt image import/export, native PSD/PSB raw/RLE 8-bit RGB layers/folders/masks/clipping/adjustments, supported editable type and vogk basic shapes, LibRaw RAW development | Complete vector/remaining PSD conversion, broader real camera/Photoshop fixtures, HEIC, remaining original import/export behavior |
-| AI tools | Not yet implemented | Windows subject/object selection, matte refinement, background removal |
+| AI tools | Application tools not yet implemented; offline AI1 ONNX export and CPU FP32 fidelity checks available for BiRefNet, SAM 2 Hiera Tiny and MobileSAM | C++ ONNX Runtime/DirectML integration, application model download/cache, Windows subject/object selection, matte refinement, background removal |
 | Performance | R1–R4 complete and integrated with L1–L4: viewport/256-pixel tiles, background rendering, incremental painting, reduced images, full-resolution sampling and pixel grid; six combined CTest suites pass | Large-document interactive acceptance on target hardware; optional GPU backend and large-canvas/history budgets |
 | Distribution | MSVC/Qt build, test suites, portable package, CI workflow | Windows installer, icons/resources, shell integration, clean-machine verification |
 | Automatic update | Excluded by user request | None; do not add an updater or update checker |

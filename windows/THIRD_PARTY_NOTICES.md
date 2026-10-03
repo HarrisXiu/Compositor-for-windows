@@ -29,3 +29,17 @@ RAW import dynamically links the unmodified LibRaw 0.22.2 Windows SDK under its 
 - Pinned archive SHA256: `AC64FA12BB00A7581332D4C6AB918C0533FB3F119D6B668D47A6875410DCA948`.
 
 Compositor's own Windows source continues to use MIT. Third-party library licenses apply to those libraries independently.
+
+## Offline AI1 model preparation
+
+`windows/export_models.py` downloads development-only sources and weights at immutable revisions. The generated ONNX files are not included in the application or portable ZIP. Python export dependencies are likewise not application runtime dependencies.
+
+| Component | Source and pinned revision | License |
+| --- | --- | --- |
+| BiRefNet code/model weights | `ZhengPeng7/BiRefNet` on Hugging Face, `e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4`; upstream MIT text from GitHub commit `ebcc0bc8ec7fe919cec829f2dea656b3078acddc` | MIT |
+| SAM 2 Hiera Tiny weights | `facebook/sam2-hiera-tiny` on Hugging Face, `7c218beaf0bb87874785f32b582f640134fc1c09` | Apache-2.0 |
+| SAM 2 code | `facebookresearch/sam2`, `2b90b9f5ceec907a1c18123530e92e794ad901a4` | Apache-2.0 |
+| MobileSAM code/model weights | `ChaoningZhang/MobileSAM`, `f706ad9c4eb7f219c00d9050e46328518ffb65d2` | Apache-2.0 |
+| SAM 2 export wrappers | `microsoft/onnxruntime` v1.22.2, `5630b081cd25e4eccc7516a652ff956e51676794` | MIT |
+
+The export folders retain the relevant upstream license texts and original model cards; verification JSON records the checkpoint and graph SHA256 hashes. Keep those notices with any later model redistribution. The SAM 2 exporter wrappers originate in ONNX Runtime, but are offline tools and do not yet integrate ONNX Runtime into the C++ app. Model/library licenses apply independently; the whole collection is not relabeled as MIT. The upstream demo images are local validation inputs only and are not included in the generated model folders or application package. RMBG-2.0 and Ultralytics are not used.

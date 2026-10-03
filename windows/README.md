@@ -26,6 +26,29 @@ The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures 
 
 When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
+## Offline AI model export (AI1)
+
+`export_models.py` prepares FP32 ONNX models for later Windows integration: the full official BiRefNet, SAM 2 Hiera Tiny, and MobileSAM. SAM 2 and MobileSAM each export an image encoder and a prompt/mask decoder, so image features can be reused between clicks. This is development tooling, not a shipped AI feature; the application still has no Python runtime dependency. C++ ONNX Runtime/DirectML integration, application model downloading, subject/object tools and background-removal UI remain separate work. No signing is performed.
+
+The initial export and verification results below were produced with the existing system Python 3.12.10 environment, not an isolated venv. `model-export-requirements.txt` records the tested dependency versions. The following Python 3.12/Git commands are a recommended isolated reproduction recipe, not a claim that the initial exports used it. Python remains development tooling only. From the repository root in PowerShell:
+
+```powershell
+python -m venv .cache\model-export-venv
+.\.cache\model-export-venv\Scripts\python.exe -m pip install -r windows\model-export-requirements.txt
+.\.cache\model-export-venv\Scripts\python.exe -B windows\tests\model_export_tests.py
+.\.cache\model-export-venv\Scripts\python.exe -B windows\export_models.py --model birefnet
+.\.cache\model-export-venv\Scripts\python.exe -B windows\export_models.py --model sam2
+.\.cache\model-export-venv\Scripts\python.exe -B windows\export_models.py --model mobilesam
+```
+
+Sources and weights use immutable revisions in the script and are cached under `.cache/`. The initial run needs network access. Default outputs are separate timestamped folders under `artifacts/ai1/<model>/`; existing ONNX files are not overwritten. Use `--output` to choose a folder, and `--verify-only --output <existing-folder>` to rerun validation without re-exporting. `--images` accepts additional local test images. These cache and artifact folders remain Git-ignored; do not commit model binaries. Full BiRefNet FP32 is about 930 MB, the SAM 2 pair about 126 MB, and the MobileSAM pair about 44 MB before compression.
+
+Each output includes a JSON verification report with source revisions, checkpoint/model SHA256 hashes, dependency versions, exact graph input/output types and shapes, preprocessing/prompt conventions, and every comparison. Upstream license texts and model cards are retained beside the graphs. BiRefNet's export-only deformable convolution lowering uses standard GridSample/MatMul operators; its PyTorch reference retains the original torchvision implementation. All graphs use opset 17, batch 1 and a 1024x1024 encoder input. Point counts and decoded image dimensions are dynamic; box prompts and image batching are not validated.
+
+Validation compares ONNX Runtime CPU with PyTorch on the three upstream SAM 2 demo images (`truck`, `cars`, `groceries`). SAM models also compare against their native predictors, testing single positive points, positive/negative points, three points, iterative mask refinement and chosen-mask identity. Tensor comparisons use `atol=0.005`, `rtol=0.0001`, at most 1% outliers for encoder/BiRefNet tensors and 0.1% for SAM decoder/native comparisons. Every candidate mask separately requires probability MAE <= 0.001 and binary IoU >= 0.995. Failure returns a nonzero exit code; interrupted/error runs are recorded as incomplete, never passed.
+
+The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 105/105 (0.9999546), and MobileSAM 99/99 (0.9999862), plus nine tooling tests. These numbers measure export fidelity on those samples, not segmentation quality against labeled ground truth, portrait/hair acceptance, Mac parity, speed or DirectML compatibility. FP16/quantization and GPU/provider verification are not included. With the pinned exporter/runtime, the SAM 2 encoder emits a lenient `MergeShapeInfo` warning for an internal Concat shape; full ONNX checking and CPU comparisons pass, but this warning must be revisited during provider integration.
+
 ## Implemented in this preview
 
 - Multiple project tabs; new, open, import, background save, and PNG/JPEG export with resolution metadata.
