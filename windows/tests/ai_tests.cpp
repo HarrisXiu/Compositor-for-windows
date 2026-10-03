@@ -5,6 +5,7 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <cmath>
+#include <limits>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
@@ -41,6 +42,53 @@ class AiTests : public QObject {
         QCOMPARE(output.size(), values.size());
         for (int i = 0; i < output.size(); ++i)
             QCOMPARE(output[i], values[i] * 2 + 1);
+    }
+    void nonfiniteCpuOutput_data() {
+        QTest::addColumn<float>("value");
+        QTest::newRow("nan") << std::numeric_limits<float>::quiet_NaN();
+        QTest::newRow("positive-infinity") << std::numeric_limits<float>::infinity();
+        QTest::newRow("negative-infinity") << -std::numeric_limits<float>::infinity();
+    }
+    void nonfiniteCpuOutput() {
+        QFETCH(float, value);
+        AiOptions options;
+        options.policy = AiProviderPolicy::CpuOnly;
+        auto session = AiSession::open(model_, options);
+        try {
+            session->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, value))});
+            QFAIL("Nonfinite output was returned to the caller");
+        } catch (const std::exception &error) {
+            const auto message = QString::fromUtf8(error.what());
+            QVERIFY(message.contains("Nonfinite AI output 'y'"));
+            QVERIFY(message.contains("element 0"));
+            QVERIFY(message.contains("CPU"));
+        }
+        QCOMPARE(session->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))})
+                     .outputs.first().floatValues().first(), 7.0f);
+    }
+    void nonfiniteDirectMLOutputFallsBack() {
+        if (!qEnvironmentVariableIsSet("COMPOSITOR_AI_GPU_TEST"))
+            QSKIP("Opt-in DirectML nonfinite regression");
+        AiOptions options;
+        for (const auto &adapter : aiAdapters())
+            if (adapter.directX12) { options.adapterIndex = adapter.index; break; }
+        QVERIFY(options.adapterIndex >= 0);
+        const QList<AiTensor> inputs{AiTensor::floats("x", {1, 3, 2, 2},
+            QVector<float>(12, std::numeric_limits<float>::quiet_NaN()))};
+        options.policy = AiProviderPolicy::DirectMLOnly;
+        auto strict = AiSession::open(model_, options);
+        QVERIFY_EXCEPTION_THROWN(strict->run(inputs), std::exception);
+        QCOMPARE(strict->backend(), QString("DirectML+CPU"));
+        QVERIFY(strict->fallbackReason().isEmpty());
+        options.policy = AiProviderPolicy::PreferDirectML;
+        auto fallback = AiSession::open(model_, options);
+        // The fixture is invalid on CPU too: reject it, but retain the GPU failure reason.
+        QVERIFY_EXCEPTION_THROWN(fallback->run(inputs), std::exception);
+        QCOMPARE(fallback->backend(), QString("CPU"));
+        QVERIFY(fallback->fallbackReason().contains("Nonfinite AI output 'y'"));
+        QVERIFY(fallback->fallbackReason().contains("DirectML"));
+        QCOMPARE(fallback->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))})
+                     .outputs.first().floatValues().first(), 7.0f);
     }
     void invalidDirectMLAdapterFallsBack() {
         AiOptions options;

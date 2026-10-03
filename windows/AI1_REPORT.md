@@ -52,7 +52,7 @@ Updated Release passes all eight CTest suites. A separate opt-in directMLDeviceL
 
 ## Remaining acceptance
 
-- Retest the returned AMD integrated / RTX 4070 SUPER GPU failures with the diagnostic overlay; root cause and acceptance remain open.
+- Returned AMD integrated / RTX 4070 SUPER BiRefNet device hangs remain unresolved; verify the new MobileSAM policy and graph-fusion diagnostics on that machine.
 - Physical no-DX12 machine: confirm automatic CPU fallback and usable performance.
 - Hardware-wide speed/memory, segmentation ground-truth quality and Mac parity remain unproven.
 - Subject/object selection, matte refinement and background-removal UI are later application tools.
@@ -63,3 +63,28 @@ Local release materials contain sizes/hashes, provenance, model cards, separate 
 The diagnostic launcher now discovers bundles placed alongside it or under repeated AI1-self-test extraction directories, and offers a folder picker when automatic discovery fails. Windows PowerShell 5.1 layout checks pass 8/8 (inside/sibling/double extraction, explicit outer directory, Chinese/spaced paths and missing files); the actual existing bundle also resolves. This changes launcher paths only; the previously validated native probe is unchanged.
 
 A complete standalone self-test bundle now includes full BiRefNet, Lite, SAM 2, MobileSAM, all reference tensors/images, the current application/probe/test binaries, runtime DLLs and licenses. Its sole launcher is 开始测试.cmd; base-package discovery and folder selection are unnecessary. The standard script includes automatic GPU failure diagnostics and verifies every repeated BiRefNet result. SHA256 uses the framework directly to avoid an observed Get-FileHash auto-loading failure during CMD launch. The extracted bundle's launcher passed integrity/TLS, all eight suites, application smoke, CPU 132/132 and RTX 4080 Laptop 150/150, then generated results-20261003-071053.zip. Other adapters' probe validation from earlier runs remains separate; the returned AMD/4070 SUPER acceptance is still open.
+
+
+## Returned complete-bundle evidence: results-20261003-202225
+
+The original directory is copied and hash-verified unchanged under artifacts/ai1/returned-7800x3d-4070super/. The same 7800X3D / Radeon integrated / RTX 4070 SUPER / MuMu inventory was recorded. Integrity, runtime/TLS, all eight suites, application smoke and CPU 132/132 pass. Lite CPU nine unprofiled runs average 3839.13 ms (3809.60–3883.10 ms).
+
+| Adapter | Full BiRefNet | Lite | SAM 2 | MobileSAM |
+| --- | --- | --- | --- | --- |
+| NVIDIA 0 and duplicate 2 | 13/13 pass | Device hung on third same-image run | 65/65 pass | 59/59 pass |
+| AMD 1 | Device hung | Device hung | 65/65 pass | Default nonfinite; portable 59/59 pass |
+
+Lite's NVIDIA failure also occurs with fresh cars/groceries processes and changed image order. The first two truck results pass before the third run reports DML/D3D12 0x887a0006. These results point to execution/reuse rather than a particular image, but do not establish an allocator, fusion, driver or virtual-display root cause. System logs record 27 nvlddmkm error events (ID 153); Message is null, so the new script also saves raw event XML.
+
+The device-removal guard rejects the hung-device output. PreferDirectML passes all six numerical checks in each AMD BiRefNet/Lite report by retrying CPU after GPU failure; NVIDIA 0 Lite also passes with CPU fallback for groceries. NVIDIA duplicate 2's prefer run passes entirely on GPU, showing that the failure is intermittent across separate sessions. CPU fallback is not strict GPU acceptance.
+
+AMD MobileSAM emits nonfinite encoder/decoder tensors while Run succeeds, so the older fallback did not trigger. Portable kernels pass all 59 checks with GPU execution at unchanged tolerances. MobileSAM's encoder and decoder now default to portable kernels on AMD; SAM 2 and BiRefNet AMD defaults remain unchanged. --vendor-metacommands explicitly overrides compatibility policies for diagnostics.
+
+Every Float32 output is now checked for NaN/infinity before exposing or caching it. PreferDirectML discards invalid GPU outputs and retries CPU with the original diagnostic; CPU nonfinite outputs are errors too. New tests cover NaN and both infinities, strict GPU rejection, actual CPU transition and subsequent valid inference. No masks are substituted, no tolerance is relaxed and failed returned reports remain failed.
+
+Automatic BiRefNet failure diagnostics additionally isolate graph fusion, with both vendor and portable kernels, using options defined by the [pinned ONNX Runtime source](https://github.com/microsoft/onnxruntime/blob/v1.24.4/onnxruntime/core/providers/dml/dml_session_options_config_keys.h). These are diagnostic options, not an accepted fix for the returned GPU hangs. New remote results are required before claiming that hardware's GPU acceptance.
+
+
+Local diagnostic evidence: RTX 4080 Laptop Lite with graph fusion disabled passes 13/13 checks, including nine runs and actual GPU nodes. Warm runs take about 213–225 ms; the first run is about 1008 ms. Disabling only the DML memory arena instead reports device hung on this local GPU. That failed experiment is retained as local-lite-no-arena-v2.json and is not a compatibility fix or an automatic self-test stage. The manual probe option remains for controlled investigation. Neither experiment establishes the returned machine's root cause.
+
+Updated Release passes all eight suites. The opt-in nonfiniteDirectMLOutputFallsBack regression passes 3/3 Qt cases with no skips; CPU tests cover NaN and both infinities. Intel UHD passes 150/150 actual-model checks. The complete-bundle CMD launch passes all 17 stages, including CPU 132/132 and RTX 4080 Laptop 150/150, and produces results-20261003-075009.zip. The final script revision replaces the unsuccessful arena experiment with a no-fusion/portable combination; Windows PowerShell 5.1 parses it and a mock of the actual failure branch verifies all five diagnostic commands. This local evidence does not claim returned AMD/4070 acceptance.

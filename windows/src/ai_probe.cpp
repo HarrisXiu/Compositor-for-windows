@@ -147,8 +147,10 @@ int main(int argc, char **argv) {
     parser.addOption({"no-profile", "Disable profiling for CPU timing only"});
     parser.addOption({"repeat", "Repeat BiRefNet timing runs per image", "count", "1"});
     parser.addOption({"threads", "CPU intra-op thread count", "count", QString::number(aiDefaultThreads())});
-    parser.addOption({"vendor-metacommands", "Diagnostic override of the Intel compatibility default"});
+    parser.addOption({"vendor-metacommands", "Diagnostic override of Intel/AMD compatibility defaults"});
     parser.addOption({"disable-metacommands", "Use portable DirectML kernels for driver diagnostics"});
+    parser.addOption({"disable-dml-graph-fusion", "Disable DirectML graph fusion for reuse diagnostics"});
+    parser.addOption({"disable-dml-memory-arena", "Disable DirectML memory arena for reuse diagnostics"});
     parser.addOption({"list-adapters", "List DXGI adapters without running models"});
     parser.process(application);
     if (parser.isSet("write-model-licenses")) {
@@ -203,7 +205,9 @@ int main(int argc, char **argv) {
         require(validThreads && options.threads > 0 && options.threads <= 64 && validAdapter && options.adapterIndex >= -1,
                 "Invalid thread count or adapter index");
         options.disableMetacommands = parser.isSet("disable-metacommands");
-        options.allowVendorMetacommandsOnIntel = parser.isSet("vendor-metacommands");
+        options.allowVendorMetacommands = parser.isSet("vendor-metacommands");
+        options.disableDmlGraphFusion = parser.isSet("disable-dml-graph-fusion");
+        options.disableDmlMemoryArena = parser.isSet("disable-dml-memory-arena");
         bool validRepeat = false;
         const int repeat = parser.value("repeat").toInt(&validRepeat);
         require(validRepeat && repeat > 0 && repeat <= 20 && (!parser.isSet("no-profile") || policy == "cpu"),
@@ -214,6 +218,9 @@ int main(int argc, char **argv) {
         report["reverse_images"] = parser.isSet("reverse-images");
         report["threads"] = options.threads;
         report["disable_metacommands"] = options.disableMetacommands;
+        report["vendor_metacommands_override"] = options.allowVendorMetacommands;
+        report["disable_dml_graph_fusion"] = options.disableDmlGraphFusion;
+        report["disable_dml_memory_arena"] = options.disableDmlMemoryArena;
         report["python_reference_onnxruntime"] = data.value("onnxruntime");
         const auto definitions = data.value("models").toArray();
         require(!definitions.isEmpty(), "Reference manifest contains no models");

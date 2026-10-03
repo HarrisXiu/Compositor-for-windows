@@ -10,7 +10,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\self-test.ps1
 
 不需要安装 Python、Qt、Visual Studio，也不需要联网或管理员权限。测试开始时校验所有文件 SHA256；不要只复制 EXE。建议接通电源、关闭其他大型计算程序，并保证数 GB 可用磁盘空间。完整模型的 CPU 检查可能需要数分钟。
 
-默认运行运行库/Schannel HTTPS 检查、8 组测试、应用启动、所有模型的 CPU 精度、Lite CPU 测速，然后逐一验证所有支持 DX12 的硬件显卡。新版 GPU 检查对每个模型启动独立进程，避免单个模型挂起时丢失其余模型的结果。`dml` 验证不会把整个会话静默回退到 CPU；Profiler 必须确认 GPU 节点执行。Intel 默认使用已验证的通用 DirectML 算子路径。BiRefNet 系列每张图运行三次，每次都校验输出。GPU 默认检查失败时自动执行通用算子、倒序/单图及 CPU 回退定位，并记录系统 GPU 恢复事件；原始失败仍保留。
+默认运行运行库/Schannel HTTPS 检查、8 组测试、应用启动、所有模型的 CPU 精度、Lite CPU 测速，然后逐一验证所有支持 DX12 的硬件显卡。新版 GPU 检查对每个模型启动独立进程，避免单个模型挂起时丢失其余模型的结果。`dml` 验证不会把整个会话静默回退到 CPU；Profiler 必须确认 GPU 节点执行。Intel 默认使用已验证的通用 DirectML 算子路径；AMD 的 MobileSAM 同样使用已实测通过的通用路径。BiRefNet 系列每张图运行三次，每次都校验输出。GPU 默认检查失败时自动执行通用算子、禁用图融合（含通用内核组合）、倒序/单图及 CPU 回退定位，并记录系统 GPU 恢复事件；原始失败仍保留。
 
 只有 CPU 或旧显卡的电脑：
 

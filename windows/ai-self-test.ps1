@@ -144,6 +144,13 @@ try {
                     $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
                     $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','dml','--repeat',$taskRepeat,'--disable-metacommands','--output',$taskOutput))
                     if ($taskId -like 'birefnet*') {
+                        foreach ($taskPortable in @($false,$true)) {
+                            $taskDiagnostic = $taskName + '-no-graph-fusion' + $(if ($taskPortable) { '-portable' } else { '' })
+                            $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
+                            $taskFusionOptions = @('--provider','dml','--repeat','3','--disable-dml-graph-fusion','--output',$taskOutput)
+                            if ($taskPortable) { $taskFusionOptions += '--disable-metacommands' }
+                            $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + $taskFusionOptions)
+                        }
                         $taskDiagnostic = $taskName + '-reverse'
                         $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
                         $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','dml','--reverse-images','--output',$taskOutput))
@@ -169,7 +176,11 @@ try {
     try {
         $taskEvents = @(Get-WinEvent -FilterHashtable @{LogName='System';StartTime=$taskStarted.AddMinutes(-1)} -ErrorAction Stop |
             Where-Object {$_.ProviderName -match 'Display|nvlddmkm|amdwddmg|amdkmdag|DxgKrnl|WHEA'} |
-            Select-Object TimeCreated,Id,LevelDisplayName,ProviderName,Message)
+            ForEach-Object {
+                # Message can be null when the driver's event resource is unavailable.
+                [pscustomobject]@{TimeCreated=$_.TimeCreated;Id=$_.Id;LevelDisplayName=$_.LevelDisplayName;
+                    ProviderName=$_.ProviderName;Message=$_.Message;Xml=$_.ToXml()}
+            })
         ConvertTo-Json -InputObject $taskEvents -Depth 5 | Set-Content -LiteralPath (Join-Path $taskRun 'gpu-system-events.json') -Encoding utf8
     } catch { $_.Exception.Message | Set-Content -LiteralPath (Join-Path $taskRun 'gpu-system-events-unavailable.txt') -Encoding utf8 }
     $env:PATH = $taskPreviousPath

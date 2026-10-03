@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <vector>
 
 namespace compositor {
@@ -182,9 +183,14 @@ struct AiSession::Impl {
             const OrtDmlApi *dml = nullptr;
             Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void **>(&dml)));
             configuration.DisableMemPattern();
-            // Intel's vendor kernels exceed MobileSAM's FP32 fidelity tolerance on our fixtures.
+            if (options.disableDmlGraphFusion)
+                configuration.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
+            if (options.disableDmlMemoryArena)
+                configuration.AddConfigEntry("ep.dml.disable_memory_arena", "1");
+            // Intel fidelity and AMD MobileSAM nonfinite outputs require portable kernels.
             metacommandsDisabled = options.disableMetacommands ||
-                                   (found->vendor == 0x8086 && !options.allowVendorMetacommandsOnIntel);
+                (!options.allowVendorMetacommands &&
+                 (found->vendor == 0x8086 || (found->vendor == 0x1002 && options.disableMetacommandsOnAmd)));
             if (metacommandsDisabled) {
                 const auto device = QByteArray::number(index);
                 const char *keys[]{"device_id", "disable_metacommands"};
@@ -251,7 +257,18 @@ struct AiSession::Impl {
             const auto information = outputs[i].GetTensorTypeAndShapeInfo();
             const auto dimensions = information.GetShape();
             AiTensor tensor{QString::fromStdString(outputNames[i]), QVector<qint64>(dimensions.begin(), dimensions.end()), aiType(information.GetElementType()), {}};
-            const auto bytes = tensor.elements() * typeSize(tensor.type);
+            const auto elements = tensor.elements();
+            if (tensor.type == AiTensorType::Float32) {
+                const auto values = outputs[i].GetTensorData<float>();
+                for (qint64 element = 0; element < elements; ++element) {
+                    if (!std::isfinite(values[element])) {
+                        const auto message = QString("Nonfinite AI output '%1' at element %2 on %3 (%4)")
+                            .arg(tensor.name).arg(element).arg(provider, adapter).toUtf8();
+                        throw Ort::Exception(message.constData(), ORT_EP_FAIL);
+                    }
+                }
+            }
+            const auto bytes = elements * typeSize(tensor.type);
             tensor.bytes = QByteArray(static_cast<const char *>(outputs[i].GetTensorRawData()), bytes);
             tensor.validate();
             result.outputs.push_back(std::move(tensor));

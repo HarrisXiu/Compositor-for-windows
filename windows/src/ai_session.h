@@ -55,7 +55,10 @@ struct AiOptions {
     int threads = aiDefaultThreads();
     QString profilePrefix;
     bool disableMetacommands = false;
-    bool allowVendorMetacommandsOnIntel = false;
+    bool allowVendorMetacommands = false;
+    bool disableMetacommandsOnAmd = false;
+    bool disableDmlGraphFusion = false;
+    bool disableDmlMemoryArena = false;
 };
 struct AiAdapter {
     int index = -1;
