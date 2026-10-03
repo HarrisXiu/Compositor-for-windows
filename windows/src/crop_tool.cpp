@@ -137,28 +137,7 @@ class CropTool final : public CanvasTool {
     QRectF before_;
     int handle_ = 0;
     double snapped(double value, bool horizontal) const {
-        QVector<double> candidates{
-            0, double(horizontal ? c.document_->size().height() : c.document_->size().width())};
-        for (const auto &entry : c.document_->metadata.value("guides").toArray()) {
-            auto guide = entry.toObject();
-            if ((guide.value("axis") == "horizontal") == horizontal)
-                candidates << guide.value("position").toDouble();
-        }
-        for (const auto &layer : c.document_->layers) {
-            if (layer.group() || !layer.visible())
-                continue;
-            const QSize source = layer.image.isNull() ? QSize(1, 1) : layer.image.size();
-            const auto bounds = layer.placement(source).mapRect(QRectF(QPointF(), source));
-            candidates << (horizontal ? bounds.top() : bounds.left())
-                       << (horizontal ? bounds.bottom() : bounds.right());
-        }
-        double closest = value, distance = 6 / c.zoom;
-        for (double candidate : candidates)
-            if (std::abs(candidate - value) < distance) {
-                distance = std::abs(candidate - value);
-                closest = candidate;
-            }
-        return closest;
+        return c.snapValue(value, horizontal);
     }
 };
 std::unique_ptr<CanvasTool> makeCropTool(Canvas &canvas) {

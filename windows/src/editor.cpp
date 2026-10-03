@@ -5,7 +5,9 @@
 #include "photoshop.h"
 #include "raw_dialog.h"
 #include "render.h"
+#include "shortcuts.h"
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -36,6 +38,8 @@ EditorWindow::EditorWindow() {
     setCentralWidget(tabs_);
     buildMenus();
     buildPanels();
+    Shortcuts::instance().validateLoaded();
+    qApp->installEventFilter(this);
     connect(tabs_, &QTabWidget::currentChanged, this, [this] { refreshPanels(); });
     connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
         auto p = qobject_cast<EditorPage *>(tabs_->widget(index));
@@ -54,6 +58,10 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
     auto a = menu->addAction(title);
     a->setProperty("layerAction", title);
     a->setShortcut(shortcut);
+    auto menuSource = menu->menuAction()->property("_uiSource_text").toString();
+    if (menuSource.isEmpty())
+        menuSource = menu->title();
+    Shortcuts::instance().registerAction(a, "menu/" + menuSource + "/" + title, "Menus");
     connect(a, &QAction::triggered, this, [this, callback] {
         try {
             callback();
@@ -77,7 +85,7 @@ void EditorWindow::addPage(Document d, const QString &path) {
     });
     connect(p->canvas, &Canvas::sessionChanged, this, [this, p] {
         if (page() == p)
-            syncToolOptions();
+            refreshPanels();
     });
     connect(p->canvas, &Canvas::filesDropped, this, &EditorWindow::importFiles);
     connect(p->canvas, &Canvas::cropRequested, this, [this, p](QRect bounds) {
@@ -216,6 +224,7 @@ void EditorWindow::setTool(Tool tool) {
     tool_ = tool;
     if (page())
         page()->canvas->setTool(tool);
+    syncToolOptions();
 }
 void EditorWindow::addMask() {
     if (!page())
@@ -232,25 +241,41 @@ void EditorWindow::addMask() {
         d.metadata["version"] = CurrentVersion;
     });
 }
-void EditorWindow::fillSelection(bool erase) {
+void EditorWindow::fillSelection(bool erase, bool background) {
     auto p = page();
     if (!p)
         return;
     auto l = p->document.active();
-    require(l && !l->image.isNull(), "Select a pixel layer");
-    auto coverage = p->canvas->selectionForLayer(*l);
+    const bool mask = p->canvas->paintMask();
+    require(l && !(mask ? l->mask : l->image).isNull(), "Select a pixel layer or mask");
+    Layer target = *l;
+    if (mask) {
+        target.image = l->mask;
+        if (l->metadata.value("maskPlacement").isObject())
+            target.metadata["transform"] = l->metadata["maskPlacement"];
+    }
+    auto coverage = p->canvas->selectionForLayer(target);
     p->edit(erase ? "Clear Pixels" : "Fill Selection", [&](Document &d) {
         auto layer = d.active();
-        auto image = layer->image;
+        auto original = (mask ? layer->mask : layer->image)
+                            .convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+        auto image = original;
         image.detach();
         QPainter painter(&image);
         if (erase)
             painter.setCompositionMode(QPainter::CompositionMode_Source);
-        painter.fillRect(image.rect(), erase ? QColor(Qt::transparent) : p->session.foreground);
+        painter.fillRect(image.rect(),
+                         erase ? QColor(mask ? Qt::black : Qt::transparent)
+                               : (background ? p->session.background : p->session.foreground));
         painter.end();
-        layer->image = limitToSelection(layer->image, image, coverage);
-        layer->metadata.remove("text");
-        layer->metadata.remove("shape");
+        auto filled = limitToSelection(original, image, coverage);
+        if (mask)
+            layer->mask = filled.convertToFormat(QImage::Format_Grayscale8);
+        else {
+            layer->image = filled;
+            layer->metadata.remove("text");
+            layer->metadata.remove("shape");
+        }
     });
 }
 void EditorWindow::crop() {

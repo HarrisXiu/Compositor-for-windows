@@ -40,17 +40,20 @@ class PanTool final : public CanvasTool {
         return;
     }
 };
+class ZoomTool final : public CanvasTool {
+  public:
+    using CanvasTool::CanvasTool;
+    void press(QMouseEvent *event) override {
+        c.zoomTo(c.zoom * (event->modifiers() & Qt::AltModifier ? .5 : 2), event->position());
+    }
+};
 class EyedropperTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
-    // Samples the full-size composite under the pointer, rendering just that pixel.
+    // Samples only the requested full-resolution region.
     void press(QMouseEvent *) override {
-        const QPoint pixel(int(std::floor(c.start_.x())), int(std::floor(c.start_.y())));
-        const auto size = c.document_->size();
-        if (!QRect(QPoint(), size).contains(pixel))
-            return;
-        auto sample = renderArea(*c.document_, {size, QRect(pixel, QSize(1, 1))});
-        emit c.colorPicked(sample.pixelColor(0, 0));
+        if (QRect(QPoint(), c.document_->size()).contains(c.start_.toPoint()))
+            emit c.colorPicked(c.sampleColor(c.start_, c.session().pickerSize));
     }
 };
 class WandTool final : public CanvasTool {
@@ -58,26 +61,44 @@ class WandTool final : public CanvasTool {
     using CanvasTool::CanvasTool;
     void press(QMouseEvent *e) override {
         auto composite = c.fullComposite();
+        if (!c.session().wandMerged) {
+            Document isolated = *c.document_;
+            for (auto &layer : isolated.layers)
+                layer.metadata["isVisible"] = layer.id() == isolated.activeId() || layer.group();
+            composite = renderDocument(isolated);
+        }
+        auto modifiers = e->modifiers();
+        if (modifiers == Qt::NoModifier) {
+            if (c.session().selectionMode == 1)
+                modifiers = Qt::ShiftModifier;
+            if (c.session().selectionMode == 2)
+                modifiers = Qt::AltModifier;
+            if (c.session().selectionMode == 3)
+                modifiers = Qt::ShiftModifier | Qt::AltModifier;
+        }
         int x = int(c.start_.x()), y = int(c.start_.y());
         if (!composite.valid(x, y))
             return;
         QImage next(composite.size(), QImage::Format_Grayscale8);
         require(!next.isNull(), "Not enough memory for selection");
         std::vector<uchar> packed(size_t(next.width()) * next.height());
-        auto result =
-            wand_mask(composite.constBits(), size_t(composite.width()), size_t(composite.height()),
-                      size_t(composite.bytesPerLine()), size_t(x), size_t(y), 0,
-                      float(c.session().wandTolerance), c.session().wandContiguous, packed.data());
+        auto result = wand_mask(
+            composite.constBits(), size_t(composite.width()), size_t(composite.height()),
+            size_t(composite.bytesPerLine()), size_t(x), size_t(y), c.session().wandSampleSize / 2,
+            float(c.session().wandTolerance), c.session().wandContiguous, packed.data());
         require(result >= 0, "Magic wand ran out of memory");
         for (int row = 0; row < next.height(); ++row)
             std::copy_n(packed.data() + size_t(row) * next.width(), next.width(),
                         next.scanLine(row));
-        if (!c.session().selection.isNull() &&
-            (e->modifiers() & (Qt::ShiftModifier | Qt::AltModifier)))
+        if (!c.session().selection.isNull() && (modifiers & (Qt::ShiftModifier | Qt::AltModifier)))
             for (int row = 0; row < next.height(); ++row)
                 for (int col = 0; col < next.width(); ++col)
                     next.scanLine(row)[col] =
-                        (e->modifiers() & Qt::AltModifier)
+                        ((modifiers & (Qt::ShiftModifier | Qt::AltModifier)) ==
+                         (Qt::ShiftModifier | Qt::AltModifier))
+                            ? uchar(int(c.session().selection.constScanLine(row)[col]) *
+                                    int(next.constScanLine(row)[col]) / 255)
+                        : (modifiers & Qt::AltModifier)
                             ? uchar(c.session().selection.constScanLine(row)[col] *
                                     (1 - next.constScanLine(row)[col] / 255.0))
                             : std::max(c.session().selection.constScanLine(row)[col],
@@ -96,14 +117,14 @@ class TextTool final : public CanvasTool {
             return;
         emit c.editStarted();
         QJsonObject style{{"content", text},
-                          {"fontName", "Segoe UI"},
-                          {"fontSize", c.session().brushSize},
+                          {"fontName", c.session().textFont},
+                          {"fontSize", c.session().textSize},
                           {"red", c.session().foreground.redF()},
                           {"green", c.session().foreground.greenF()},
                           {"blue", c.session().foreground.blueF()},
-                          {"alignment", "Left"},
-                          {"tracking", 0},
-                          {"leading", 0}};
+                          {"alignment", c.session().textAlignment},
+                          {"tracking", c.session().textTracking},
+                          {"leading", c.session().textLeading}};
         auto image = renderText(style);
         auto id = c.document_->addImage(text.left(30), image);
         auto l = c.document_->find(id);
@@ -114,11 +135,21 @@ class TextTool final : public CanvasTool {
         return;
     }
 };
+class SelectTool final : public CanvasTool {
+  public:
+    using CanvasTool::CanvasTool;
+    void press(QMouseEvent *e) override {
+        c.selectLayerAt(c.start_, e->modifiers() & Qt::ShiftModifier);
+    }
+};
 class MoveTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
-    void press(QMouseEvent *) override {
+    void press(QMouseEvent *e) override {
+        if (c.session().autoSelect)
+            c.selectLayerAt(c.start_, e->modifiers() & Qt::ShiftModifier);
         require(c.document_->active(), "Select a layer first");
+        c.transformBefore_ = *c.document_->active();
 
         emit c.editStarted();
         c.beginLayerEdit(c.document_->activeId());
@@ -130,7 +161,34 @@ class MoveTool final : public CanvasTool {
 
         auto layer = c.document_->active();
         if (layer) {
-            layer->move(point - c.last_);
+            auto delta = point - c.start_;
+            if (e->modifiers() & Qt::ShiftModifier) {
+                if (std::abs(delta.x()) > std::abs(delta.y()))
+                    delta.setY(0);
+                else
+                    delta.setX(0);
+            }
+            auto target = c.transformTarget(c.transformBefore_);
+            const auto source = target.image.isNull() ? QSize(1, 1) : target.image.size();
+            if (!(e->modifiers() & Qt::ControlModifier)) {
+                auto frame =
+                    target.placement(source).mapRect(QRectF(QPointF(), source)).translated(delta);
+                auto adjustment =
+                    snapBounds(*c.document_, c.session().view, frame, c.zoom, {layer->id()});
+                if (e->modifiers() & Qt::ShiftModifier) {
+                    if (delta.x() == 0)
+                        adjustment.setX(0);
+                    else
+                        adjustment.setY(0);
+                }
+                delta += adjustment;
+            }
+            layer->metadata = c.transformBefore_.metadata;
+            if (c.paintMask() && !layer->mask.isNull()) {
+                target.move(delta);
+                layer->metadata["maskPlacement"] = target.transform();
+            } else
+                layer->move(delta);
             emit c.edited();
             c.refresh();
         }
@@ -148,6 +206,14 @@ class SelectionTool : public CanvasTool {
         c.dragging_ = true;
         c.priorSelection_ = c.session().selection;
         c.selectionModifiers_ = e->modifiers();
+        if (c.selectionModifiers_ == Qt::NoModifier) {
+            if (c.session().selectionMode == 1)
+                c.selectionModifiers_ = Qt::ShiftModifier;
+            if (c.session().selectionMode == 2)
+                c.selectionModifiers_ = Qt::AltModifier;
+            if (c.session().selectionMode == 3)
+                c.selectionModifiers_ = Qt::ShiftModifier | Qt::AltModifier;
+        }
         c.lasso_ = QPainterPath(c.start_);
         return;
     }
@@ -169,30 +235,51 @@ class SelectionTool : public CanvasTool {
 class ShapeTool : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
-    void press(QMouseEvent *) override {
+    void press(QMouseEvent *e) override {
+        c.start_ = {c.snapValue(c.start_.x(), false, e->modifiers()),
+                    c.snapValue(c.start_.y(), true, e->modifiers())};
+        c.last_ = c.start_;
         emit c.editStarted();
         c.dragging_ = true;
         return;
     }
     void move(QMouseEvent *e) override {
         c.last_ = c.toDocument(e->position());
+        c.last_ = {c.snapValue(c.last_.x(), false, e->modifiers()),
+                   c.snapValue(c.last_.y(), true, e->modifiers())};
+        if (e->modifiers() & Qt::ShiftModifier) {
+            auto delta = c.last_ - c.start_;
+            if (c.session().tool == Tool::Line) {
+                auto angle =
+                    std::round(std::atan2(delta.y(), delta.x()) / (3.141592653589793 / 12)) *
+                    (3.141592653589793 / 12);
+                auto length = std::hypot(delta.x(), delta.y());
+                c.last_ = c.start_ + QPointF(std::cos(angle), std::sin(angle)) * length;
+            } else {
+                const auto side = std::max(std::abs(delta.x()), std::abs(delta.y()));
+                c.last_ =
+                    c.start_ + QPointF(delta.x() < 0 ? -side : side, delta.y() < 0 ? -side : side);
+            }
+        }
         c.update();
     }
-    void release(QMouseEvent *) override {
+    void release(QMouseEvent *e) override {
+        move(e);
         auto r = QRectF(c.start_, c.last_).normalized();
         if (c.session().tool != Tool::Line && (r.width() < 1 || r.height() < 1)) {
             emit c.editCanceled();
             return;
         }
         if (c.session().tool == Tool::Line) {
-            auto bounds = r.adjusted(-c.session().brushSize / 2, -c.session().brushSize / 2,
-                                     c.session().brushSize / 2, c.session().brushSize / 2);
+            auto bounds =
+                r.adjusted(-c.session().shapeLineWidth / 2, -c.session().shapeLineWidth / 2,
+                           c.session().shapeLineWidth / 2, c.session().shapeLineWidth / 2);
             QJsonObject style{{"kind", "Line"},
                               {"red", c.session().foreground.redF()},
                               {"green", c.session().foreground.greenF()},
                               {"blue", c.session().foreground.blueF()},
                               {"cornerRadius", 0},
-                              {"lineWidth", c.session().brushSize},
+                              {"lineWidth", c.session().shapeLineWidth},
                               {"start", QJsonArray{(c.start_.x() - bounds.x()) / bounds.width(),
                                                    (c.start_.y() - bounds.y()) / bounds.height()}},
                               {"end", QJsonArray{(c.last_.x() - bounds.x()) / bounds.width(),
@@ -216,7 +303,8 @@ class ShapeTool : public CanvasTool {
         if (c.session().tool == Tool::Ellipse)
             p.drawEllipse(QRectF(QPointF(), image.size()));
         else
-            p.drawRect(QRectF(QPointF(), image.size()));
+            p.drawRoundedRect(QRectF(QPointF(), image.size()), c.session().shapeCornerRadius,
+                              c.session().shapeCornerRadius);
         p.end();
         auto id = c.document_->addImage(c.session().tool == Tool::Ellipse ? "Ellipse" : "Rectangle",
                                         image);
@@ -227,7 +315,7 @@ class ShapeTool : public CanvasTool {
                         {"red", c.session().foreground.redF()},
                         {"green", c.session().foreground.greenF()},
                         {"blue", c.session().foreground.blueF()},
-                        {"cornerRadius", 0}};
+                        {"cornerRadius", c.session().shapeCornerRadius}};
         emit c.editFinished("Shape Layer");
         c.refresh();
         return;
@@ -243,6 +331,7 @@ class PaintTool : public CanvasTool {
         if (c.session().tool == Tool::Clone && (e->modifiers() & Qt::AltModifier)) {
             c.cloneSource_ = c.start_;
             c.cloneReady_ = true;
+            c.cloneStrokeReady_ = false;
             return;
         }
         c.beginPaint(e);
@@ -315,10 +404,14 @@ class LineTool final : public ShapeTool {
 };
 std::unique_ptr<CanvasTool> makeCanvasTool(Tool kind, Canvas &canvas) {
     switch (kind) {
+    case Tool::Select:
+        return std::make_unique<SelectTool>(canvas);
     case Tool::Move:
         return std::make_unique<MoveTool>(canvas);
     case Tool::Pan:
         return std::make_unique<PanTool>(canvas);
+    case Tool::Zoom:
+        return std::make_unique<ZoomTool>(canvas);
     case Tool::Eyedropper:
         return std::make_unique<EyedropperTool>(canvas);
     case Tool::Wand:

@@ -4,6 +4,7 @@
 #include "editable_layers.h"
 #include "filters.h"
 #include "render.h"
+#include "shortcuts.h"
 #include <QAbstractTextDocumentLayout>
 #include <QBuffer>
 #include <QDragEnterEvent>
@@ -18,6 +19,7 @@
 #include <QPainter>
 #include <QResizeEvent>
 #include <QTextDocument>
+#include <QTimer>
 #include <QUrl>
 #include <QWheelEvent>
 #include <QtConcurrent/QtConcurrentMap>
@@ -84,6 +86,16 @@ Canvas::Canvas(Document *document, EditorSession *session, QWidget *parent)
     setAcceptDrops(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(200, 200);
+    session_->view = loadCanvasViewOptions();
+    auto ants = new QTimer(this);
+    ants->setInterval(100);
+    connect(ants, &QTimer::timeout, this, [this] {
+        if (isVisible() && !session_->selection.isNull()) {
+            antsPhase_ = (antsPhase_ + 1) % 8;
+            update();
+        }
+    });
+    ants->start();
     stampAll();
     connect(&batchWatcher_, &QFutureWatcherBase::finished, this, &Canvas::finishBatch);
 }
@@ -104,8 +116,11 @@ CanvasTool &Canvas::controller() {
 QRectF Canvas::canvasRect() const {
     const auto s = document_->size();
     const auto extent = QSizeF(s) * zoom;
-    return QRectF(QPointF((width() - extent.width()) / 2, (height() - extent.height()) / 2) + pan_,
-                  extent);
+    const double inset = session_->view.rulers ? 24 : 0;
+    return QRectF(
+        QPointF((width() + inset - extent.width()) / 2, (height() + inset - extent.height()) / 2) +
+            pan_,
+        extent);
 }
 QPointF Canvas::toDocument(QPointF point) const {
     return (point - canvasRect().topLeft()) / zoom;
@@ -301,6 +316,8 @@ void Canvas::cancelInteraction() {
     if (!dragging_)
         return;
     dragging_ = false;
+    guideDrag_ = -1;
+    transformHandle_ = -1;
     if (session_->tool == Tool::Crop && !temporaryPan_)
         session_->cropFrame = session_->cropBeforeGesture;
     warp_.reset();
@@ -395,17 +412,18 @@ void Canvas::paintEvent(QPaintEvent *) {
     drawDocument(p, r);
     drawPixelGrid(p, r);
     const auto guides = document_->metadata.value("guides").toArray();
-    p.setPen(QPen(QColor(55, 205, 220), 1));
-    for (const auto &v : guides) {
-        auto g = v.toObject();
-        double position = g.value("position").toDouble() * zoom;
-        if (g.value("axis") == "horizontal")
-            p.drawLine(QPointF(r.left(), r.top() + position),
-                       QPointF(r.right(), r.top() + position));
-        else
-            p.drawLine(QPointF(r.left() + position, r.top()),
-                       QPointF(r.left() + position, r.bottom()));
-    }
+    p.setPen(QPen(session_->view.guideColor, 1));
+    if (session_->view.guides)
+        for (const auto &v : guides) {
+            auto g = v.toObject();
+            double position = g.value("position").toDouble() * zoom;
+            if (g.value("axis") == "horizontal")
+                p.drawLine(QPointF(r.left(), r.top() + position),
+                           QPointF(r.right(), r.top() + position));
+            else
+                p.drawLine(QPointF(r.left() + position, r.top()),
+                           QPointF(r.left() + position, r.bottom()));
+        }
     p.restore();
     p.setPen(QColor(5, 6, 8));
     p.drawRect(r);
@@ -426,31 +444,51 @@ void Canvas::paintEvent(QPaintEvent *) {
                 selectionOutline_.moveTo(a * scale);
                 selectionOutline_.lineTo(b * scale);
             };
-            for (int y = 0; y < mask.height(); ++y)
-                for (int x = 0; x < mask.width(); ++x)
-                    if (selected(x, y)) {
-                        if (!selected(x, y - 1))
-                            edge({double(x), double(y)}, {double(x + 1), double(y)});
-                        if (!selected(x, y + 1))
-                            edge({double(x), double(y + 1)}, {double(x + 1), double(y + 1)});
-                        if (!selected(x - 1, y))
-                            edge({double(x), double(y)}, {double(x), double(y + 1)});
-                        if (!selected(x + 1, y))
-                            edge({double(x + 1), double(y)}, {double(x + 1), double(y + 1)});
+            auto runs = [&](int length, auto boundary, auto coordinate) {
+                int start = -1;
+                for (int i = 0; i <= length; ++i) {
+                    const bool inside = i < length && boundary(i);
+                    if (inside && start < 0)
+                        start = i;
+                    if (!inside && start >= 0) {
+                        edge(coordinate(start), coordinate(i));
+                        start = -1;
                     }
+                }
+            };
+            for (int y = 0; y < mask.height(); ++y) {
+                runs(
+                    mask.width(), [&](int x) { return selected(x, y) && !selected(x, y - 1); },
+                    [&](int x) { return QPointF(x, y); });
+                runs(
+                    mask.width(), [&](int x) { return selected(x, y) && !selected(x, y + 1); },
+                    [&](int x) { return QPointF(x, y + 1); });
+            }
+            for (int x = 0; x < mask.width(); ++x) {
+                runs(
+                    mask.height(), [&](int y) { return selected(x, y) && !selected(x - 1, y); },
+                    [&](int y) { return QPointF(x, y); });
+                runs(
+                    mask.height(), [&](int y) { return selected(x, y) && !selected(x + 1, y); },
+                    [&](int y) { return QPointF(x + 1, y); });
+            }
         }
         if (!selectionOutline_.isEmpty()) {
             QTransform map;
             map.translate(r.left(), r.top());
             map.scale(zoom, zoom);
             auto outline = map.map(selectionOutline_);
-            p.setPen(QPen(Qt::black, 1, Qt::DashLine));
+            p.setPen(QPen(Qt::black, 1));
             p.drawPath(outline);
-            p.setPen(QPen(Qt::white, 1, Qt::DotLine));
+            QPen ants(Qt::white, 1, Qt::CustomDashLine);
+            ants.setDashPattern({4, 4});
+            ants.setDashOffset(antsPhase_);
+            p.setPen(ants);
             p.drawPath(outline);
         }
     }
     controller().paintOverlay(p);
+    drawCanvasOverlay(p);
 }
 // Draws the document into `target` from tiles rendered at the level that matches the zoom: at
 // least as many pixels as the screen shows, so drawing only shrinks a level by up to half, or
@@ -757,11 +795,12 @@ void Canvas::dab(QPointF point) {
                 for (int c = 0; c < 4; ++c)
                     p[c] = uchar(std::lround(base[c] * (1 - amount)));
             } else if (session_->tool == Tool::Clone) {
-                auto q = inverse.map(docPoint + cloneOffset_);
+                auto q = session_->cloneMerged ? docPoint + cloneOffset_
+                                               : inverse.map(docPoint + cloneOffset_);
                 int cx = int(q.x()), cy = int(q.y());
-                if (!original_.valid(cx, cy))
+                if (!cloneSample_.valid(cx, cy))
                     continue;
-                auto source = original_.constScanLine(cy) + cx * 4;
+                auto source = cloneSample_.constScanLine(cy) + cx * 4;
                 for (int c = 0; c < 4; ++c)
                     p[c] = uchar(std::lround(base[c] * (1 - amount) + source[c] * amount));
             } else {
@@ -792,6 +831,8 @@ void Canvas::finishSelection() {
     require(!mask.isNull(), "Not enough memory for selection");
     mask.fill(0);
     QPainter p(&mask);
+    p.setRenderHint(QPainter::Antialiasing,
+                    session_->selectionAntialiased && session_->tool != Tool::RectangleSelect);
     p.setPen(Qt::NoPen);
     p.setBrush(Qt::white);
     auto r = QRectF(start_, last_).normalized();
@@ -809,8 +850,12 @@ void Canvas::finishSelection() {
             auto n = mask.scanLine(y);
             auto old = priorSelection_.constScanLine(y);
             for (int x = 0; x < mask.width(); ++x)
-                n[x] = (selectionModifiers_ & Qt::AltModifier) ? uchar(old[x] * (1 - n[x] / 255.0))
-                                                               : std::max(old[x], n[x]);
+                n[x] = ((selectionModifiers_ & (Qt::AltModifier | Qt::ShiftModifier)) ==
+                        (Qt::AltModifier | Qt::ShiftModifier))
+                           ? uchar(int(old[x]) * int(n[x]) / 255)
+                       : (selectionModifiers_ & Qt::AltModifier)
+                           ? uchar(old[x] * (1 - n[x] / 255.0))
+                           : std::max(old[x], n[x]);
         }
     }
     replaceSelection(mask, "Change Selection");
@@ -820,7 +865,17 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
         return;
     setFocus();
     start_ = last_ = toDocument(e->position());
+    hover_ = e->position();
+    hovered_ = true;
     try {
+        if (beginOverlayEdit(e))
+            return;
+        if (brushTool() && (e->modifiers() & Qt::AltModifier) && session_->tool != Tool::Clone) {
+            auto pixel = QPoint(int(std::floor(start_.x())), int(std::floor(start_.y())));
+            if (QRect(QPoint(), document_->size()).contains(pixel))
+                emit colorPicked(sampleColor(start_, session_->pickerSize));
+            return;
+        }
         controller().press(e);
     } catch (const std::exception &ex) {
         cancelInteraction();
@@ -828,9 +883,31 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
     }
 }
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
+    hover_ = e->position();
+    hovered_ = true;
+    temporaryPicker_ =
+        brushTool() && session_->tool != Tool::Clone && (e->modifiers() & Qt::AltModifier);
+    if (session_->tool == Tool::Eyedropper || temporaryPicker_) {
+        auto point = toDocument(hover_);
+        QPoint pixel(int(std::floor(point.x())), int(std::floor(point.y())));
+        if (QRect(QPoint(), document_->size()).contains(pixel)) {
+            try {
+                hoverColor_ = sampleColor(point, session_->pickerSize);
+            } catch (const std::exception &) {
+                hoverColor_ = Qt::transparent;
+            }
+        } else
+            hoverColor_ = Qt::transparent;
+    }
+    setCursor(temporaryPan_ || session_->tool == Tool::Pan ? Qt::OpenHandCursor
+              : brushTool() && !temporaryPicker_           ? Qt::BlankCursor
+                                                           : Qt::CrossCursor);
+    update();
     if (!dragging_)
         return;
     try {
+        if (moveOverlayEdit(e))
+            return;
         controller().move(e);
     } catch (const std::exception &ex) {
         cancelInteraction();
@@ -840,9 +917,22 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     if (!dragging_ || e->button() != Qt::LeftButton)
         return;
+    const auto previous = last_;
     last_ = toDocument(e->position());
     try {
-        controller().release(e);
+        if (!original_.isNull() &&
+            (session_->tool == Tool::Brush || session_->tool == Tool::Erase) &&
+            session_->brushSmoothing > 0) {
+            auto delta = last_ - previous;
+            const int steps = std::min(
+                1000, std::max(1, int(std::ceil(std::hypot(delta.x(), delta.y()) /
+                                                std::max(1.0, session_->brushSize * .1)))));
+            for (int i = 1; i <= steps; ++i)
+                dab(previous + delta * (double(i) / steps));
+            refreshStroke();
+        }
+        if (!finishOverlayEdit(e))
+            controller().release(e);
     } catch (const std::exception &ex) {
         emit error(QString::fromUtf8(ex.what()));
     }
@@ -855,28 +945,21 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     update();
 }
 void Canvas::keyPressEvent(QKeyEvent *e) {
-    if (controller().keyPress(e))
-        return;
-    if (e->key() == Qt::Key_Escape) {
-        controller().cancel();
-    } else if (e->key() == Qt::Key_Space && !e->isAutoRepeat() && !dragging_) {
-        temporaryPan_ = true;
-        setCursor(Qt::OpenHandCursor);
-    } else if (e->key() == Qt::Key_X && e->modifiers() == Qt::NoModifier) {
-        std::swap(session_->foreground, session_->background);
-        emit sessionChanged();
-    } else if (e->key() == Qt::Key_D && e->modifiers() == Qt::NoModifier) {
-        session_->foreground = Qt::black;
-        session_->background = Qt::white;
-        emit sessionChanged();
-    } else {
-        QWidget::keyPressEvent(e);
+    try {
+        if (handleCanvasKey(e)) {
+            e->accept();
+            return;
+        }
+    } catch (const std::exception &ex) {
+        cancelInteraction();
+        emit error(QString::fromUtf8(ex.what()));
+        e->accept();
         return;
     }
-    e->accept();
+    QWidget::keyPressEvent(e);
 }
 void Canvas::keyReleaseEvent(QKeyEvent *e) {
-    if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+    if ((temporaryPan_ && e->key() == panPhysicalKey_) && !e->isAutoRepeat()) {
         cancelInteraction();
         temporaryPan_ = false;
         setCursor(session_->tool == Tool::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
@@ -897,6 +980,7 @@ void Canvas::wheelEvent(QWheelEvent *e) {
     auto now = canvasRect().topLeft() + point * zoom;
     pan_ += e->position() - now;
     update();
+    emit sessionChanged();
 }
 void Canvas::dragEnterEvent(QDragEnterEvent *e) {
     if (e->mimeData()->hasUrls())

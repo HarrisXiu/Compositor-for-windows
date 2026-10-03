@@ -6,6 +6,7 @@
 #include "layer_operations.h"
 #include "raw_import.h"
 #include "render.h"
+#include "shortcuts.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -74,6 +75,8 @@ void EditorWindow::buildMenus() {
         }
     });
     edit->addSeparator();
+    action(edit, "Keyboard Shortcuts…", QKeySequence("Ctrl+Alt+Shift+K"),
+           [this] { Shortcuts::instance().showDialog(this); });
     action(edit, "Copy Layers", QKeySequence::Copy, [this] { copySelectedLayers(); });
     action(edit, "Cut Layers", QKeySequence::Cut, [this] {
         copySelectedLayers();
@@ -96,7 +99,17 @@ void EditorWindow::buildMenus() {
         page()->edit("Paste Image", [&](Document &d) { d.addImage("Pasted Image", image); });
     });
     action(edit, "Fill Selection", QKeySequence("Shift+F5"), [this] { fillSelection(); });
-    action(edit, "Clear Pixels", QKeySequence(Qt::Key_Delete), [this] { fillSelection(true); });
+    action(edit, "Fill with Foreground", QKeySequence("Alt+Delete"), [this] { fillSelection(); });
+    action(edit, "Fill with Background", QKeySequence("Ctrl+Delete"),
+           [this] { fillSelection(false, true); });
+    action(edit, "Delete Selection / Layer", QKeySequence(Qt::Key_Delete), [this] {
+        if (page() && page()->session.selection.isNull() && !page()->canvas->paintMask() &&
+            (page()->session.tool == Tool::Move || page()->session.tool == Tool::Select))
+            deleteSelectedLayers();
+        else
+            fillSelection(true);
+    });
+    action(edit, "Clear Pixels", {}, [this] { fillSelection(true); });
     auto layer = menuBar()->addMenu("&Layer");
     action(layer, "New Paint Layer", QKeySequence("Ctrl+Shift+N"), [this] {
         if (page())
@@ -129,6 +142,12 @@ void EditorWindow::buildMenus() {
     });
     action(layer, "Edit Text…", {}, [this] { editText(); });
     action(layer, "Edit Shape…", {}, [this] { editShape(); });
+    action(layer, "Transform Layer", QKeySequence("Ctrl+T"), [this] {
+        setTool(Tool::Move);
+        for (auto a : findChildren<QAction *>())
+            if (a->property("layerAction").toString() == "Show Transform Controls")
+                a->setChecked(true);
+    });
     auto adjustments = layer->addMenu("New Adjustment Layer");
     for (const auto &kind : QStringList{
              "Hue/Saturation", "Levels", "Curves", "Exposure", "Gradient Map", "Grain", "Invert",
@@ -281,13 +300,31 @@ void EditorWindow::buildMenus() {
     action(image, "Flip Canvas Vertical", {}, [this] { flipDocument(false); });
     for (const auto &kind : QStringList{"Invert", "Exposure", "Levels", "Curves", "Hue/Saturation",
                                         "Black & White", "Gradient Map", "Color Balance"})
-        action(image, kind + "…", {}, [this, kind] { filter(kind); });
+        action(image, kind + "…",
+               QKeySequence(kind == "Curves"           ? "Ctrl+M"
+                            : kind == "Levels"         ? "Ctrl+L"
+                            : kind == "Hue/Saturation" ? "Ctrl+U"
+                            : kind == "Invert"         ? "Ctrl+Alt+Shift+I"
+                                                       : ""),
+               [this, kind] {
+                   if (kind == "Invert" && page() && page()->canvas->paintMask()) {
+                       page()->edit("Invert Mask", [](Document &d) {
+                           auto l = d.active();
+                           require(l && !l->mask.isNull(), "Select a layer with a mask");
+                           l->mask.invertPixels();
+                       });
+                   } else
+                       filter(kind);
+               });
     auto filters = menuBar()->addMenu("&Filter");
     for (const auto &kind : QStringList{"Gaussian Blur", "Motion Blur", "Add Noise", "Grain",
                                         "Lens Correction", "Camera Raw", "Dither", "Vignette",
                                         "Bloom / Glow", "Tonal Contrast", "Content-Aware Fill"})
-        action(filters, kind + "…", {}, [this, kind] { filter(kind); });
+        action(filters, kind + "…",
+               QKeySequence(kind == "Content-Aware Fill" ? "Shift+Delete" : ""),
+               [this, kind] { filter(kind); });
     auto view = menuBar()->addMenu("&View");
+    buildViewMenu(view);
     auto language = view->addMenu("Language");
     language->setObjectName("languageMenu");
     auto languageGroup = new QActionGroup(this);
@@ -315,8 +352,7 @@ void EditorWindow::buildMenus() {
     });
     action(view, "Actual Pixels", QKeySequence("Ctrl+1"), [this] {
         if (page()) {
-            page()->canvas->zoom = 1;
-            page()->canvas->update();
+            page()->canvas->zoomTo(1);
         }
     });
     auto help = menuBar()->addMenu("&Help");

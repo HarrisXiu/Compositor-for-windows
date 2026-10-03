@@ -2,12 +2,19 @@
 #include "editor.h"
 #include "layer_operations.h"
 #include "layer_transfer.h"
+#include "shortcuts.h"
+#include <QAbstractSpinBox>
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTextEdit>
 
 namespace compositor {
 QSet<QString> EditorWindow::selectedLayers() const {
@@ -85,6 +92,28 @@ bool EditorWindow::pasteCopiedLayers() {
     return true;
 }
 bool EditorWindow::eventFilter(QObject *object, QEvent *event) {
+    if (event->type() == QEvent::ShortcutOverride) {
+        auto widget = qobject_cast<QWidget *>(object);
+        if (widget && isAncestorOf(widget) &&
+            (qobject_cast<QLineEdit *>(widget) || qobject_cast<QTextEdit *>(widget) ||
+             qobject_cast<QPlainTextEdit *>(widget) || qobject_cast<QAbstractSpinBox *>(widget) ||
+             (qobject_cast<QComboBox *>(widget) &&
+              qobject_cast<QComboBox *>(widget)->isEditable()))) {
+            auto key = static_cast<QKeyEvent *>(event);
+            if (!(key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+                event->accept();
+                return true;
+            }
+            for (const auto &entry : Shortcuts::instance().entries())
+                if (entry.group == "Canvas" || entry.group == "Tools") {
+                    const auto sequence = Shortcuts::instance().sequence(entry);
+                    if (!sequence.isEmpty() && sequence[0] == key->keyCombination()) {
+                        event->accept();
+                        return true;
+                    }
+                }
+        }
+    }
     auto bar = qobject_cast<QTabBar *>(object);
     if (bar && bar->parentWidget() == tabs_ &&
         (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove ||

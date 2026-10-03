@@ -4,6 +4,7 @@
 #include "editor_session.h"
 #include "warp_brush.h"
 #include <QCache>
+#include <QElapsedTimer>
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QHash>
@@ -61,7 +62,15 @@ class Canvas : public QWidget {
     void cancelCropFrame();
     QRect selectionBounds() const;
     void setTool(Tool value);
+    void cycleToolMode();
+    void zoomTo(double value, QPointF anchor = {});
+    double snapValue(double value, bool horizontal, Qt::KeyboardModifiers modifiers = {},
+                     const QSet<QString> &exclude = {}) const;
+    void addGuide(bool horizontal, double position);
+    void clearGuides();
+    bool brushTool() const;
     QImage selectionForLayer(const Layer &layer) const;
+    QColor sampleColor(QPointF position, int sampleSize = 1);
   signals:
     void editStarted();
     void editFinished(const QString &label);
@@ -76,6 +85,7 @@ class Canvas : public QWidget {
     void error(const QString &message);
 
   protected:
+    bool event(QEvent *) override;
     void paintEvent(QPaintEvent *) override;
     void resizeEvent(QResizeEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
@@ -88,6 +98,7 @@ class Canvas : public QWidget {
     void keyPressEvent(QKeyEvent *) override;
     void keyReleaseEvent(QKeyEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
+    void leaveEvent(QEvent *) override;
 
   private:
     Document *document_;
@@ -134,6 +145,19 @@ class Canvas : public QWidget {
     // How far, in document pixels, the edited layer's effects carry a change.
     double strokeReach_ = 0;
     QString renderError_;
+    QPointF hover_;
+    bool hovered_ = false, temporaryPicker_ = false;
+    int panPhysicalKey_ = 0;
+    QColor hoverColor_ = Qt::transparent;
+    int antsPhase_ = 0, guideDrag_ = -1, transformHandle_ = -1, opacityDigit_ = -1;
+    QElapsedTimer opacityClock_;
+    Layer transformBefore_;
+    QRectF transformBounds_;
+    QImage cloneSample_;
+    bool cloneStrokeReady_ = false;
+    QPointF lastBrushPoint_;
+    QString lastBrushLayer_;
+    bool lastBrushMask_ = false;
     bool fitted_ = false;
     QRectF canvasRect() const;
     QPointF toDocument(QPointF point) const;
@@ -143,6 +167,15 @@ class Canvas : public QWidget {
     void finishBatch();
     void reportRenderError(const QString &message);
     void drawPixelGrid(QPainter &painter, const QRectF &target);
+    void drawCanvasOverlay(QPainter &painter);
+    bool beginOverlayEdit(QMouseEvent *event);
+    bool moveOverlayEdit(QMouseEvent *event);
+    bool finishOverlayEdit(QMouseEvent *event);
+    QVector<QPointF> transformPoints(const Layer &layer) const;
+    Layer transformTarget(const Layer &layer) const;
+    void selectLayerAt(QPointF point, bool extend);
+    bool handleCanvasKey(QKeyEvent *event);
+    void nudge(QPointF delta, bool pixels);
     void invalidate(const QRectF &area);
     void forgetTiles();
     void stampAll();
@@ -158,6 +191,7 @@ class Canvas : public QWidget {
     friend class SelectionTool;
     friend class ShapeTool;
     friend class MoveTool;
+    friend class SelectTool;
     friend class PanTool;
     friend class EyedropperTool;
     friend class WandTool;

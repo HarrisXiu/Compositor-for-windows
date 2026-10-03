@@ -95,16 +95,20 @@ class EditorWindow : public QMainWindow {
     void editText();
     void editShape();
     void addMask();
-    void fillSelection(bool erase = false);
+    void fillSelection(bool erase = false, bool background = false);
     void crop();
     bool canClose(EditorPage *page);
     void showError(const QString &message);
     QAction *action(QMenu *menu, const QString &title, const QKeySequence &shortcut,
                     const std::function<void()> &callback);
     void buildMenus();
+    void buildViewMenu(QMenu *menu);
+    void applyViewOptions(const CanvasViewOptions &options);
     void buildPanels();
     void buildToolOptions();
     void syncToolOptions();
+    void buildExtraToolOptions();
+    void syncExtraToolOptions();
     QSet<QString> selectedLayers() const;
     void mergeSelectedLayers();
     void groupSelectedLayers();
@@ -119,5 +123,11 @@ class EditorWindow : public QMainWindow {
     void flipDocument(bool horizontal);
     void applyCrop(QRect bounds);
     QAction *mergeAction_ = nullptr;
+    QComboBox *selectionMode_ = nullptr, *gradientType_ = nullptr, *pickerSize_ = nullptr;
+    QCheckBox *cloneAligned_ = nullptr, *cloneMerged_ = nullptr, *gradientBackground_ = nullptr,
+              *gradientReverse_ = nullptr, *autoSelect_ = nullptr;
+    QDoubleSpinBox *cornerRadius_ = nullptr, *lineWidth_ = nullptr, *textSize_ = nullptr,
+                   *zoomPercent_ = nullptr;
+    QComboBox *textFont_ = nullptr;
 };
 } // namespace compositor

@@ -905,11 +905,17 @@ class UiTests : public QObject {
     }
     // The canvas once its background rendering has caught up.
     static QImage rendered(Canvas *c) {
+        // Pixel comparisons exclude pointer and transform overlays; CanvasTests covers them.
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(c, &leave);
+        const bool controls = c->session().view.transformControls;
+        c->session().view.transformControls = false;
         auto shot = c->grab().toImage();
         for (int i = 0; i < 20 && c->rendering(); ++i) {
             c->waitForRendering();
             shot = c->grab().toImage();
         }
+        c->session().view.transformControls = controls;
         return shot;
     }
     void backgroundRenderingDiscardsOutdatedTiles() {
@@ -1102,7 +1108,8 @@ class UiTests : public QObject {
         page.edit("Flip", [](Document &document) { flipCanvas(document, true); });
         QCOMPARE(at(100, 200), QColor(Qt::blue));
         QCOMPARE(at(500, 200), QColor(Qt::red));
-        page.edit("Crop", [](Document &document) { cropCanvas(document, QRect(300, 0, 300, 400)); });
+        page.edit("Crop",
+                  [](Document &document) { cropCanvas(document, QRect(300, 0, 300, 400)); });
         QCOMPARE(page.document.size(), QSize(300, 400));
         QCOMPARE(at(10, 200), QColor(Qt::red));
         QCOMPARE(at(290, 200), QColor(Qt::red));

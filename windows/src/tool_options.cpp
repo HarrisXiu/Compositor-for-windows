@@ -15,6 +15,7 @@
 namespace compositor {
 void EditorWindow::buildToolOptions() {
     auto tools = addToolBar("Tools");
+    tools->setObjectName("canvasTools");
     tools->setMovable(false);
     auto group = new QActionGroup(this);
     group->setExclusive(true);
@@ -52,9 +53,10 @@ void EditorWindow::buildToolOptions() {
             a->setChecked(true);
         connect(a, &QAction::triggered, this, [this, t = option.tool] { setTool(t); });
     }
-    auto brush = addToolBar("Brush");
-    brush->setMovable(false);
     addToolBarBreak();
+    auto brush = addToolBar("Brush");
+    brush->setObjectName("brushOptions");
+    brush->setMovable(false);
     brush->addWidget(new QLabel("  Size  "));
     brushSize_ = new QDoubleSpinBox;
     brushSize_->setRange(1, 2000);
@@ -118,6 +120,7 @@ void EditorWindow::buildToolOptions() {
     connect(brushOpacity_, &QDoubleSpinBox::valueChanged, this, syncBrush);
     connect(maskTarget_, &QCheckBox::toggled, this, syncBrush);
     auto selectionTools = addToolBar("Selection Options");
+    selectionTools->setObjectName("wandOptions");
     selectionTools->setMovable(false);
     selectionTools->addWidget(new QLabel("Wand tolerance  "));
     tolerance_ = new QDoubleSpinBox;
@@ -167,6 +170,7 @@ void EditorWindow::buildToolOptions() {
     crop->setToolTip("Enter or double-click applies; Esc cancels. Shift locks ratio, Alt resizes "
                      "from center, Ctrl disables snapping.");
     crop->setVisible(false);
+    buildExtraToolOptions();
 }
 void EditorWindow::syncToolOptions() {
     auto p = page();
@@ -204,8 +208,12 @@ void EditorWindow::syncToolOptions() {
     tolerance_->setValue(p->session.wandTolerance);
     contiguous_->setChecked(p->session.wandContiguous);
     maskTarget_->setChecked(p->session.target == EditTarget::Mask);
-    colorButton_->setStyleSheet("background:" + p->session.foreground.name() + ";color:white;");
-    backgroundButton_->setStyleSheet("background:" + p->session.background.name() +
-                                     ";color:white;");
+    auto swatch = [](QPushButton *button, QColor color) {
+        button->setStyleSheet("background:" + color.name() +
+                              ";color:" + (qGray(color.rgb()) > 150 ? "black;" : "white;"));
+    };
+    swatch(colorButton_, p->session.foreground);
+    swatch(backgroundButton_, p->session.background);
+    syncExtraToolOptions();
 }
 } // namespace compositor

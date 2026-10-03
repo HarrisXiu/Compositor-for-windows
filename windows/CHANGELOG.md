@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### 2026-10-03 — version remains 0.4.0
+
+- Completed the L1–L4 layer/canvas scope: thumbnails, multi-selection, merge/group/order operations, cross-project subtree copy, editable crop, canvas/image size, trim and flips.
+- Deployed Qt/LibRaw DLLs and the offscreen plugin beside test executables, fixing the missing Qt6Gui.dll test-launch error.
+- Integrated R2–R4 with the existing layer/canvas editing behavior; the rendering changes are listed below.
+- Completed C1–C5 for current Windows tools: canvas keys and overlays, single-layer/mask transform handles, rulers/guides/grids/shared snapping, contextual tool options and persistent configurable shortcuts. Extended Chinese/Japanese UI coverage.
+- Main-worktree Release regression records 238 passed, 0 failed and 2 optional benchmarks skipped across seven suites. This does not establish Mac parity or target-hardware performance acceptance.
+- Added pinned FP32 model export and verification tooling for BiRefNet, SAM 2 and MobileSAM, with model hashes, signatures and original licenses. Python is development tooling only.
+- Recorded external AI1 progress separately: C++ inference/model management, supported Intel integrated GPU DirectML and CPU fallback, plus complete offline test delivery. AI1 remains on its own branch; application AI selection/refinement/background-removal interactions and main-worktree integration are pending.
+- Rewrote the root README as a Windows project overview and added the [daily development log](DEVELOPMENT_LOG.md), including external AI1 evidence and integration boundaries. Models, caches and artifacts remain excluded from Git; no version/schema bump or updater was added.
+
+### Integrated rendering changes
+
 - Replaced the 1,600-pixel whole-document canvas preview with 256-pixel tiles rendered for what is on screen, at full resolution when zoomed in and at power-of-two reductions when zoomed out; tiles render in parallel and are cached.
 - Refreshes redraw only the tiles over layers that changed; recording a finished edit redraws nothing. Brush dabs redraw only the area they touch, compositing the edited layer and those above over a kept backdrop.
 - Zoomed-out views halve layer images before resampling them, so they stay sharp; exports are unchanged. Painting updates only the changed part of the halved images and of a mask's coverage image.

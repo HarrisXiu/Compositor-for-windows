@@ -27,7 +27,7 @@ extern "C" {
 }
 
 namespace compositor {
-void Canvas::beginPaint(QMouseEvent *) {
+void Canvas::beginPaint(QMouseEvent *event) {
     auto layer = document_->active();
     require(layer, "Select a layer first");
     require(!layer->group() || paintMask(), "Select an image layer or a folder mask");
@@ -40,6 +40,7 @@ void Canvas::beginPaint(QMouseEvent *) {
         require(cloneReady_, "Alt-click the canvas to set a clone source");
     require(!paintMask() || !layer->mask.isNull(), "Add a mask before painting it");
     emit editStarted();
+    layer = document_->active();
     beginLayerEdit(layer->id());
     strokeArea_ = {};
     strokePixels_ = {};
@@ -82,13 +83,38 @@ void Canvas::beginPaint(QMouseEvent *) {
     coverage_ = QImage(original_.size(), QImage::Format_Grayscale8);
     require(!coverage_.isNull(), "Not enough memory for stroke");
     coverage_.fill(0);
-    cloneOffset_ = cloneSource_ - start_;
-    if (session_->tool != Tool::Gradient)
-        dab(start_);
+    if (!session_->cloneAligned || !cloneStrokeReady_)
+        cloneOffset_ = cloneSource_ - start_;
+    if (session_->tool == Tool::Clone) {
+        cloneStrokeReady_ = true;
+        cloneSample_ = session_->cloneMerged ? fullComposite() : original_;
+    }
+    if (session_->tool != Tool::Gradient) {
+        if ((session_->tool == Tool::Brush || session_->tool == Tool::Erase) &&
+            (event->modifiers() & Qt::ShiftModifier) && lastBrushLayer_ == layer->id() &&
+            lastBrushMask_ == paintMask()) {
+            auto delta = start_ - lastBrushPoint_;
+            const int steps = std::min(
+                1000, std::max(1, int(std::ceil(std::hypot(delta.x(), delta.y()) /
+                                                std::max(1.0, session_->brushSize * .1)))));
+            for (int i = 0; i <= steps; ++i)
+                dab(lastBrushPoint_ + delta * (double(i) / steps));
+        } else
+            dab(start_);
+    }
     refreshStroke();
 }
 void Canvas::continuePaint(QMouseEvent *e) {
     auto point = toDocument(e->position());
+    if ((session_->tool == Tool::Brush || session_->tool == Tool::Erase) &&
+        session_->brushSmoothing > 0) {
+        const auto delta = point - last_;
+        const auto distance = std::hypot(delta.x(), delta.y());
+        const auto radius = session_->brushSmoothing / std::max(.01, zoom);
+        if (distance <= radius)
+            return;
+        point = last_ + delta * ((distance - radius) / distance);
+    }
     if (warp_) {
         if (warp_->append(point)) {
             warpChanged_ = true;
@@ -143,10 +169,22 @@ void Canvas::finishPaint(QMouseEvent *) {
         QImage painted = original_;
         painted.detach();
         QPainter p(&painted);
-        QLinearGradient gradient(from, to);
-        gradient.setColorAt(0, session_->foreground);
-        gradient.setColorAt(1, Qt::transparent);
-        p.fillRect(painted.rect(), gradient);
+        QColor begin = session_->foreground,
+               end = session_->gradientBackground ? session_->background : QColor(Qt::transparent);
+        if (session_->gradientReverse)
+            std::swap(begin, end);
+        p.setOpacity(session_->brushOpacity);
+        if (session_->gradientKind == 1) {
+            QRadialGradient gradient(from, std::max(.001, QLineF(from, to).length()));
+            gradient.setColorAt(0, begin);
+            gradient.setColorAt(1, end);
+            p.fillRect(painted.rect(), gradient);
+        } else {
+            QLinearGradient gradient(from, to);
+            gradient.setColorAt(0, begin);
+            gradient.setColorAt(1, end);
+            p.fillRect(painted.rect(), gradient);
+        }
         p.end();
         layer->image = limitToSelection(original_, painted, selectionForLayer(*layer));
         layer->metadata.remove("text");
@@ -162,11 +200,16 @@ void Canvas::finishPaint(QMouseEvent *) {
                         packed.data() + size_t(y) * coverage_.width());
         require(spot_heal(image.bits(), packed.data(), size_t(image.width()),
                           size_t(image.height()), size_t(image.bytesPerLine()),
-                          float(session_->brushOpacity), 0, 1) == 0,
+                          float(session_->brushOpacity), session_->healingMode, 1) == 0,
                 "Spot healing ran out of memory");
         layer->image = image;
         layer->metadata.remove("text");
         layer->metadata.remove("shape");
+    }
+    if (session_->tool == Tool::Brush || session_->tool == Tool::Erase) {
+        lastBrushPoint_ = last_;
+        lastBrushLayer_ = layer->id();
+        lastBrushMask_ = paintMask();
     }
     emit editFinished(session_->tool == Tool::Move       ? "Move Layer"
                       : session_->tool == Tool::Gradient ? "Gradient"
