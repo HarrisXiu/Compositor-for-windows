@@ -6,7 +6,7 @@
 
 ## Run
 
-Extract **the entire** `Compositor-Windows-x64.zip` archive and run `Compositor.exe` in that folder. Keep the DLLs and plugin folders beside the executable. Target: Windows 10/11 x64. This portable preview does not install file associations. Automatic updating is deliberately excluded from the Windows port: there is no update checker, download service or updater in the Windows build.
+Extract **the entire** `Compositor-Windows-x64.zip` archive and run `Compositor.exe` in that folder. Keep the DLLs and plugin folders beside the executable. Target: Windows 10/11 x64. This portable preview does not install file associations. Automatic updating is deliberately excluded from the Windows port: there is no update checker, update download service or updater in the Windows build.
 
 Use **Help > Open Demo** to try an editable layered document immediately, or import your own images with `Ctrl+I`.
 
@@ -22,13 +22,27 @@ From PowerShell at the repository root:
 .\windows\build.ps1 -QtRoot C:\Qt\6.10.2\msvc2022_64 -Package
 ```
 
-The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs six test suites, deploys the Qt/LibRaw DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
+The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs eight test suites, deploys the Qt/LibRaw/ONNX Runtime/DirectML DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
 
 When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
+## Local AI runtime and models (AI1)
+
+**Help > AI Models…** (**帮助 > AI 模型…**) opens the model manager. BiRefNet Lite (181,695,409 bytes), SAM 2 Hiera Tiny (126,036,117 bytes), and MobileSAM (44,466,658 bytes) have fixed SHA256 hashes and separate licenses. Models live in Windows local application data under Compositor/Models/. No model weights or Python runtime are bundled with the editor.
+
+The model release remains unpublished by request. Download/Resume and Restart remain disabled until a separately authorized release updates the catalog. Use **Import Local Files…** with matching ONNX files from the locally staged model release. Missing/corrupt files are rejected; verified bytes are installed atomically with each model's license/notice. Installed models stay usable offline. Optional HTTPS downloading supports cancellation, strong-ETag/Range resumption, server restart, bounded writes and size/SHA256 verification. Install locks prevent simultaneous processes modifying one model.
+
+ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 are SHA256-pinned SDKs and dynamically deployed runtimes. DirectML is preferred on a compatible hardware DX12 adapter; initialization/execution failures fall back to CPU under the normal policy, retaining a reason. The probe's dml policy does not silently fall back an entire session, though unsupported nodes may run on CPU. Intel defaults to portable DirectML kernels: vendor metacommands exceeded MobileSAM FP32 tolerances, while the portable path passed unchanged thresholds and still executed GPU nodes. Background sessions support cancellation and SAM encoder reuse.
+
+SAM 2's MergeShapeInfo warning was traced to a wrong [5] output annotation inside an unused nested Tile If branch. Removing only that annotation resolves strict shape inference. All nine encoder outputs on three images are CPU bitwise identical; computation/weights are unchanged. Corrected encoder SHA256: 461ce21868f57db114211d09d2c853bc02e7e9a3034cdab71d00a81d3a0767a5.
+
+CPU inference uses half the available logical processors, bounded to 1–12 threads. On the i9-13900HX, Lite's six unprofiled runs averaged 9.92 s at 4 threads, 5.26 s at 8, and 3.80 s at 12, excluding load/preprocessing. These are measurements on this machine, not a universal speed guarantee.
+
+The local Release build and eight CTest suites pass. CPU, NVIDIA RTX 4080 Laptop and Intel UHD checks compare outputs, chosen SAM candidate identity, iterative masks, C++ preprocessing and encoder reuse against Python reference tensors from three real images. GPU reports require executed DirectML nodes. This is numerical fidelity, not ground-truth quality or Mac parity. AMD and physical machines without hardware DX12 remain pending. See [AI1 report](AI1_REPORT.md) and [cross-machine self-test instructions](AI1_SELF_TEST.md). The self-test needs neither Python nor developer tools and produces a report ZIP to bring back.
+
 ## Offline AI model export (AI1)
 
-`export_models.py` prepares FP32 ONNX models for later Windows integration: the full official BiRefNet, SAM 2 Hiera Tiny, and MobileSAM. SAM 2 and MobileSAM each export an image encoder and a prompt/mask decoder, so image features can be reused between clicks. This is development tooling, not a shipped AI feature; the application still has no Python runtime dependency. C++ ONNX Runtime/DirectML integration, application model downloading, subject/object tools and background-removal UI remain separate work. No signing is performed.
+`export_models.py` prepares FP32 ONNX models for Windows integration: the full official BiRefNet, MIT-licensed BiRefNet Lite, SAM 2 Hiera Tiny, and MobileSAM. SAM 2 and MobileSAM each export an image encoder and a prompt/mask decoder, so image features can be reused between clicks. Export is development tooling; the shipped editor/model manager has no Python runtime dependency. The C++ runtime and application model manager are now integrated; subject/object tools and background-removal UI remain later application work. No signing is performed.
 
 The initial export and verification results below were produced with the existing system Python 3.12.10 environment, not an isolated venv. `model-export-requirements.txt` records the tested dependency versions. The following Python 3.12/Git commands are a recommended isolated reproduction recipe, not a claim that the initial exports used it. Python remains development tooling only. From the repository root in PowerShell:
 
@@ -47,7 +61,7 @@ Each output includes a JSON verification report with source revisions, checkpoin
 
 Validation compares ONNX Runtime CPU with PyTorch on the three upstream SAM 2 demo images (`truck`, `cars`, `groceries`). SAM models also compare against their native predictors, testing single positive points, positive/negative points, three points, iterative mask refinement and chosen-mask identity. Tensor comparisons use `atol=0.005`, `rtol=0.0001`, at most 1% outliers for encoder/BiRefNet tensors and 0.1% for SAM decoder/native comparisons. Every candidate mask separately requires probability MAE <= 0.001 and binary IoU >= 0.995. Failure returns a nonzero exit code; interrupted/error runs are recorded as incomplete, never passed.
 
-The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 105/105 (0.9999546), and MobileSAM 99/99 (0.9999862), plus nine tooling tests. These numbers measure export fidelity on those samples, not segmentation quality against labeled ground truth, portrait/hair acceptance, Mac parity, speed or DirectML compatibility. FP16/quantization and GPU/provider verification are not included. With the pinned exporter/runtime, the SAM 2 encoder emits a lenient `MergeShapeInfo` warning for an internal Concat shape; full ONNX checking and CPU comparisons pass, but this warning must be revisited during provider integration.
+The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 105/105 (0.9999546), and MobileSAM 99/99 (0.9999862), plus nine tooling tests. These numbers measure export fidelity on those samples, not segmentation quality against labeled ground truth, portrait/hair acceptance, Mac parity, speed or DirectML compatibility. FP16/quantization are not included. These are the initial export results; current C++ provider checks and the corrected SAM 2 nested shape annotation are described above.
 
 ## Implemented in this preview
 

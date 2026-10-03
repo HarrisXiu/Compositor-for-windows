@@ -513,5 +513,22 @@
   "Select layers to group": "グループ化するレイヤーを選択してください",
   "Select a folder to ungroup": "解除するグループを選択してください",
   "Copied layers exceed memory limit": "コピーするレイヤーがメモリ制限を超えています",
-  "Resized layers exceed memory limit": "サイズ変更後のレイヤーがメモリ制限を超えています"
+  "Resized layers exceed memory limit": "サイズ変更後のレイヤーがメモリ制限を超えています",
+  "AI Models": "AI モデル",
+  "Models run locally. Downloads are optional and SHA256 verified; installed models remain available offline.": "モデルはローカルで実行されます。ダウンロードは任意で SHA256 を検証し、インストール後はオフラインでも使用できます。",
+  "The model release has not been published yet. Import matching local files; unpublished download URLs are not requested.": "モデル配布は未公開です。一致するローカルファイルを取り込んでください。未公開の URL には接続しません。",
+  "Checking model cache…": "モデルキャッシュを確認中…",
+  "Download / Resume": "ダウンロード／再開",
+  "Restart Download": "最初からダウンロード",
+  "Import Local Files": "ローカルファイルを取り込む",
+  "Cancel Transfer": "転送をキャンセル",
+  "Discard this model's partial download and start again?": "このモデルの部分ダウンロードを破棄して最初から開始しますか？",
+  "Downloading and verifying model component": "モデル構成ファイルをダウンロード・検証中",
+  "Cancelled. Partial downloads are preserved for Resume.": "キャンセルしました。部分ファイルは再開用に保存されます。",
+  "Importing and verifying local model files…": "ローカルモデルを取り込み・検証中…",
+  "Model installed and verified.": "モデルをインストールし、検証しました。",
+  "Cancelled.": "キャンセルしました。",
+  "Model is missing or its size/SHA256 check failed.": "モデルがないか、サイズ／SHA256 検証に失敗しました。",
+  "Model license files are missing or do not match the installed model.": "モデルのライセンスファイルがないか、一致しません。",
+  "Installed and SHA256 verified. Available offline.": "インストール・SHA256 検証済み。オフラインで使用できます。"
 }

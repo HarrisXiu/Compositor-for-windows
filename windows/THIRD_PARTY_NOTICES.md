@@ -2,7 +2,7 @@
 
 Compositor Windows is based on [robbietilton/Compositor](https://github.com/robbietilton/Compositor) at commit `11d8d7a50992b24fd9a760a1c13b1c01b70aaf30`. The original C image-processing code is included under the repository's MIT license; the portable package includes `LICENSE-Compositor.txt`.
 
-This build dynamically links the unmodified open-source Qt 6.10.2 Core, Gui, Widgets, Svg and Concurrent libraries. Qt Concurrent supports row-parallel compositing and asynchronous work; its DLL is included. It deploys these Qt plugins: `platforms/qwindows`, `styles/qmodernwindowsstyle`, `iconengines/qsvgicon` and the `imageformats` plugins (GIF, ICNS, ICO, JPEG, SVG, TGA, TIFF, WBMP, WebP). Qt Network and its plugins are not deployed. Qt libraries are distributed under the GNU Lesser General Public License version 3. The package includes:
+This build dynamically links the unmodified open-source Qt 6.10.2 Core, Gui, Widgets, Svg, Concurrent and Network libraries. Qt Concurrent supports row-parallel compositing and asynchronous work; its DLL is included. It deploys these Qt plugins: `platforms/qwindows`, `styles/qmodernwindowsstyle`, `iconengines/qsvgicon` and the `imageformats` plugins (GIF, ICNS, ICO, JPEG, SVG, TGA, TIFF, WBMP, WebP). Qt Network and its Schannel TLS backend are deployed for optional HTTPS model downloads; Windows supplies Schannel. Qt's OpenSSL backend may also be present, but no OpenSSL DLL is redistributed or required. Qt libraries are distributed under the GNU Lesser General Public License version 3. The package includes:
 
 - `licenses/LGPL-3.0-only.txt` and `licenses/GPL-3.0-only.txt` (LGPLv3 incorporates the GPLv3 text).
 - `licenses/Qt/<module>/`: every license text referenced by the deployed Qt modules and the third-party code inside them, taken from Qt's own source archives.
@@ -30,6 +30,12 @@ RAW import dynamically links the unmodified LibRaw 0.22.2 Windows SDK under its 
 
 Compositor's own Windows source continues to use MIT. Third-party library licenses apply to those libraries independently.
 
+## AI1 inference runtimes
+
+The application dynamically links ONNX Runtime DirectML 1.24.4 (onnxruntime.dll, onnxruntime_providers_shared.dll) and DirectML 1.15.4 (DirectML.dll). ONNX Runtime is MIT licensed; its runtime includes separately attributed code. The package preserves the SDK's complete LICENSE and ThirdPartyNotices.txt as licenses/ONNX-Runtime-MIT.txt and licenses/ONNX-Runtime-ThirdPartyNotices.txt.
+
+DirectML's binary redistribution uses Microsoft's own Windows/Xbox terms, independently of Compositor's MIT license. The SDK's complete LICENSE.txt, LICENSE-CODE.txt and ThirdPartyNotices.txt are preserved as licenses/DirectML-LICENSE.txt, licenses/DirectML-CODE-LICENSE.txt and licenses/DirectML-ThirdPartyNotices.txt. MIT on SDK sample/source code does not relabel the DirectML binary. windows/fetch-onnx-runtime.ps1 records the NuGet archive SHA256 values.
+
 ## Offline AI1 model preparation
 
 `windows/export_models.py` downloads development-only sources and weights at immutable revisions. The generated ONNX files are not included in the application or portable ZIP. Python export dependencies are likewise not application runtime dependencies.
@@ -37,9 +43,10 @@ Compositor's own Windows source continues to use MIT. Third-party library licens
 | Component | Source and pinned revision | License |
 | --- | --- | --- |
 | BiRefNet code/model weights | `ZhengPeng7/BiRefNet` on Hugging Face, `e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4`; upstream MIT text from GitHub commit `ebcc0bc8ec7fe919cec829f2dea656b3078acddc` | MIT |
+| BiRefNet Lite weights | ZhengPeng7/BiRefNet_lite on Hugging Face, aa62cd87eafb9cc43056d08ef3615a14628b831d; original BiRefNet code license above | MIT |
 | SAM 2 Hiera Tiny weights | `facebook/sam2-hiera-tiny` on Hugging Face, `7c218beaf0bb87874785f32b582f640134fc1c09` | Apache-2.0 |
 | SAM 2 code | `facebookresearch/sam2`, `2b90b9f5ceec907a1c18123530e92e794ad901a4` | Apache-2.0 |
 | MobileSAM code/model weights | `ChaoningZhang/MobileSAM`, `f706ad9c4eb7f219c00d9050e46328518ffb65d2` | Apache-2.0 |
 | SAM 2 export wrappers | `microsoft/onnxruntime` v1.22.2, `5630b081cd25e4eccc7516a652ff956e51676794` | MIT |
 
-The export folders retain the relevant upstream license texts and original model cards; verification JSON records the checkpoint and graph SHA256 hashes. Keep those notices with any later model redistribution. The SAM 2 exporter wrappers originate in ONNX Runtime, but are offline tools and do not yet integrate ONNX Runtime into the C++ app. Model/library licenses apply independently; the whole collection is not relabeled as MIT. The upstream demo images are local validation inputs only and are not included in the generated model folders or application package. RMBG-2.0 and Ultralytics are not used.
+The export folders retain the relevant upstream license texts and original model cards; verification JSON records the checkpoint and graph SHA256 hashes. Keep those notices with any later model redistribution. The SAM 2 exporter wrappers originate in ONNX Runtime, and remain offline tools; the C++ application separately links the runtime described above. Model/library licenses apply independently; the whole collection is not relabeled as MIT. The upstream demo images are local validation inputs only and are not included in the generated model folders or application package. RMBG-2.0 and Ultralytics are not used.
