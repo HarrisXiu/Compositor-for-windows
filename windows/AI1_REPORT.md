@@ -59,3 +59,5 @@ Updated Release passes all eight CTest suites. A separate opt-in directMLDeviceL
 - Controlled responses cover download regression because the model release remains unpublished; real model-release endpoint acceptance is deferred.
 
 Local release materials contain sizes/hashes, provenance, model cards, separate licenses/notices and validation reports. published=false prevents requests to nonexistent release URLs. There is no updater or update checker.
+
+The diagnostic launcher now discovers bundles placed alongside it or under repeated AI1-self-test extraction directories, and offers a folder picker when automatic discovery fails. Windows PowerShell 5.1 layout checks pass 8/8 (inside/sibling/double extraction, explicit outer directory, Chinese/spaced paths and missing files); the actual existing bundle also resolves. This changes launcher paths only; the previously validated native probe is unchanged.

@@ -21,7 +21,7 @@ def main():
     shutil.copy2(source / "ai-gpu-retest.ps1", root / "gpu-retest.ps1")
     shutil.copy2(source / "AI1_GPU_RETEST.md", root / "README.md")
     (root / "run-gpu-retest.cmd").write_text(
-        '@echo off\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0gpu-retest.ps1" %*\n'
+        '@echo off\npowershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0gpu-retest.ps1" %*\n'
         'set "taskExit=%ERRORLEVEL%"\npause\nexit /b %taskExit%\n', encoding="ascii")
     records = []
     for path in sorted(root.rglob("*")):

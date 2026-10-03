@@ -1,11 +1,13 @@
 # AI1 GPU 定位复测
 
-这是用于已有 AI1-self-test 的小型诊断包，不含模型，不修改原包或之前的结果。
+这是用于已有 AI1-self-test 的小型诊断包，不含模型，不修改原包或之前的结果。新版可自动识别多套一层目录的解压方式，也可与原包放在同级。
 
-1. 把 AI1-gpu-retest.zip 带到原测试电脑，解压到原 AI1-self-test 文件夹内。
-2. 确认目录是 AI1-self-test/AI1-gpu-retest/run-gpu-retest.cmd，旁边仍有原来的 bin、models、references 和 SHA256SUMS.json。
-3. 接通电源，关闭游戏、模拟器和其他 GPU 计算程序。双击 run-gpu-retest.cmd。
-4. 带回新生成的 gpu-retest-日期时间.zip。
+1. 把新版 AI1-gpu-retest.zip 带到原测试电脑，解压到本地；原来的完整模型包也需要保留。
+2. 接通电源，关闭游戏、模拟器和其他 GPU 计算程序。双击新版 run-gpu-retest.cmd。
+3. 脚本自动查找附近的原包；找不到时会弹出文件夹选择框。选择包含 bin、models、references、SHA256SUMS.json 的文件夹，或其外层 AI1-self-test 目录。
+4. 带回原包目录中新生成的 gpu-retest-日期时间.zip。
+
+例如原包位于 G:/AI1-self-test/AI1-self-test，新工具位于 G:/AI1-gpu-retest，也能自动定位。无需手工移动模型、改目录名或编辑脚本。启动时会打印实际使用的原包路径。
 
 无需联网、安装软件或管理员权限。首次运行会把原包中已校验的 DLL 复制到探针旁边，避免 Windows 系统中的旧版 ONNX Runtime 抢先加载。默认测所有支持 DX12 的硬件适配器，包括虚拟显示驱动暴露的重复索引；约需数分钟，失败后的定位检查可能延长时间。
 

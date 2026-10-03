@@ -1,18 +1,66 @@
 ﻿param(
-    [string]$BundleRoot = (Split-Path -Parent $PSScriptRoot),
+    [string]$BundleRoot,
     [int]$AdapterIndex = -1,
     [ValidateRange(0,64)][int]$Threads = 0,
-    [string[]]$Models = @('birefnet-lite','sam2','mobilesam','birefnet')
+    [string[]]$Models = @('birefnet-lite','sam2','mobilesam','birefnet'),
+    [switch]$LocateOnly,
+    [switch]$NoPrompt
 )
 $ErrorActionPreference = 'Stop'
 if ($Threads -eq 0) { $Threads = [Math]::Max(1,[Math]::Min(12,[Math]::Floor([Environment]::ProcessorCount / 2))) }
-$taskRoot = [IO.Path]::GetFullPath($BundleRoot)
-$taskBin = Join-Path $taskRoot 'bin'
-$taskProbe = Join-Path $PSScriptRoot 'probe\compositor_ai_probe.exe'
-$taskManifest = Join-Path $taskRoot 'references\references.json'
-if (-not (Test-Path -LiteralPath $taskProbe) -or -not (Test-Path -LiteralPath $taskManifest)) {
-    throw 'Extract AI1-gpu-retest inside the original AI1-self-test directory.'
+function Test-AiBundleDirectory([string]$Directory) {
+    foreach ($taskRequired in @('bin\compositor_ai_probe.exe','bin\onnxruntime.dll','references\references.json','SHA256SUMS.json')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Directory $taskRequired) -PathType Leaf)) { return $false }
+    }
+    return (Test-Path -LiteralPath (Join-Path $Directory 'models') -PathType Container)
 }
+function Find-AiBundleDirectory([string]$Anchor) {
+    if (-not $Anchor) { return $null }
+    $taskCandidate = [IO.Path]::GetFullPath($Anchor)
+    # ZIP extraction commonly adds another directory with the same name.
+    for ($taskDepth = 0; $taskDepth -le 4; $taskDepth++) {
+        if (Test-AiBundleDirectory $taskCandidate) { return $taskCandidate }
+        $taskCandidate = Join-Path $taskCandidate 'AI1-self-test'
+    }
+    return $null
+}
+$taskProbe = Join-Path $PSScriptRoot 'probe\compositor_ai_probe.exe'
+if (-not (Test-Path -LiteralPath $taskProbe -PathType Leaf)) {
+    throw ("Diagnostic probe is missing: " + $taskProbe + ". Extract the entire new ZIP.")
+}
+$taskRoot = $null
+if ($BundleRoot) {
+    $taskRoot = Find-AiBundleDirectory $BundleRoot
+} else {
+    # Support placement inside the bundle, alongside it, and inside an outer ZIP directory.
+    $taskAnchor = $PSScriptRoot
+    for ($taskLevel = 0; $taskLevel -lt 3 -and $taskAnchor -and -not $taskRoot; $taskLevel++) {
+        $taskRoot = Find-AiBundleDirectory $taskAnchor
+        $taskParent = [IO.Directory]::GetParent($taskAnchor)
+        $taskAnchor = if ($taskParent) { $taskParent.FullName } else { $null }
+    }
+}
+if (-not $taskRoot -and -not $NoPrompt) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $taskPicker = New-Object System.Windows.Forms.FolderBrowserDialog
+    $taskPicker.Description = '请选择原 AI1-self-test 文件夹（包含 bin、models、references），也可选择外层解压目录。'
+    $taskPicker.ShowNewFolderButton = $false
+    try {
+        if ($taskPicker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $taskRoot = Find-AiBundleDirectory $taskPicker.SelectedPath
+        }
+    } finally { $taskPicker.Dispose() }
+}
+if (-not $taskRoot) {
+    throw '没有找到完整原包。请重新运行并选择包含 bin、models、references、SHA256SUMS.json 的 AI1-self-test 文件夹。'
+}
+Write-Host ('Original bundle: ' + $taskRoot)
+if ($LocateOnly) {
+    Write-Host 'Directory layout check passed. GPU tests have not run.'
+    exit 0
+}
+$taskBin = Join-Path $taskRoot 'bin'
+$taskManifest = Join-Path $taskRoot 'references\references.json'
 $taskStart = Get-Date
 $taskRun = Join-Path $taskRoot ('gpu-retest-' + $taskStart.ToString('yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $taskRun | Out-Null
