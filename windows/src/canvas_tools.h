@@ -29,4 +29,5 @@ class CanvasTool {
     Canvas &c;
 };
 std::unique_ptr<CanvasTool> makeCanvasTool(Tool kind, Canvas &canvas);
+std::unique_ptr<CanvasTool> makeCropTool(Canvas &canvas);
 } // namespace compositor

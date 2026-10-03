@@ -5,6 +5,7 @@
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
@@ -28,6 +29,7 @@ void EditorWindow::buildToolOptions() {
                    {"Ellipse Select", Tool::EllipseSelect, ""},
                    {"Lasso", Tool::Lasso, "L"},
                    {"Wand", Tool::Wand, "W"},
+                   {"Crop", Tool::Crop, "C"},
                    {"Gradient", Tool::Gradient, "G"},
                    {"Rectangle", Tool::Rectangle, "U"},
                    {"Ellipse", Tool::Ellipse, ""},
@@ -133,12 +135,62 @@ void EditorWindow::buildToolOptions() {
         if (!syncing_ && page())
             page()->canvas->session().wandContiguous = v;
     });
+    auto crop = addToolBar("Crop options");
+    crop->setObjectName("cropOptions");
+    crop->setMovable(false);
+    auto ratio = new QComboBox;
+    ratio->setObjectName("cropRatio");
+    ratio->addItems({"Free", "Original ratio", "1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"});
+    crop->addWidget(new QLabel("Aspect ratio"));
+    crop->addWidget(ratio);
+    connect(ratio, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (syncing_ || !page())
+            return;
+        const double ratios[]{
+            0,       double(page()->document.size().width()) / page()->document.size().height(),
+            1,       4.0 / 3,
+            3.0 / 4, 1.5,
+            2.0 / 3, 16.0 / 9,
+            9.0 / 16};
+        page()->session.cropRatio = ratios[index];
+    });
+    auto apply = crop->addAction("Apply Crop");
+    auto cancel = crop->addAction("Cancel Crop");
+    connect(apply, &QAction::triggered, this, [this] {
+        if (page())
+            page()->canvas->applyCropFrame();
+    });
+    connect(cancel, &QAction::triggered, this, [this] {
+        if (page())
+            page()->canvas->cancelCropFrame();
+    });
+    crop->setToolTip("Enter or double-click applies; Esc cancels. Shift locks ratio, Alt resizes "
+                     "from center, Ctrl disables snapping.");
+    crop->setVisible(false);
 }
 void EditorWindow::syncToolOptions() {
     auto p = page();
     if (!p)
         return;
     tool_ = p->session.tool;
+    if (auto crop = findChild<QToolBar *>("cropOptions")) {
+        crop->setVisible(tool_ == Tool::Crop);
+        auto ratio = crop->findChild<QComboBox *>("cropRatio");
+        QSignalBlocker blocker(ratio);
+        const double ratios[]{
+            0,       double(p->document.size().width()) / p->document.size().height(),
+            1,       4.0 / 3,
+            3.0 / 4, 1.5,
+            2.0 / 3, 16.0 / 9,
+            9.0 / 16};
+        int index = 0;
+        for (int i = 0; i < 9; ++i)
+            if (std::abs(p->session.cropRatio - ratios[i]) < 1e-6) {
+                index = i;
+                break;
+            }
+        ratio->setCurrentIndex(index);
+    }
     for (auto action : findChildren<QAction *>())
         if (action->property("canvasTool").isValid())
             action->setChecked(action->property("canvasTool").toInt() == int(tool_));

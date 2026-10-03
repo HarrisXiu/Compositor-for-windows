@@ -4,4 +4,5 @@
 namespace compositor {
 QImage renderDocument(const Document &document, QSize outputSize = {});
 QImage layerSelection(const Document &document, const Layer &layer, const QImage &selection);
+QImage bakeClipping(const Document &document, const Layer &layer);
 } // namespace compositor

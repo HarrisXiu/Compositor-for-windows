@@ -299,10 +299,6 @@ class LassoTool final : public SelectionTool {
   public:
     using SelectionTool::SelectionTool;
 };
-class CropTool final : public SelectionTool {
-  public:
-    using SelectionTool::SelectionTool;
-};
 class RectangleTool final : public ShapeTool {
   public:
     using ShapeTool::ShapeTool;
@@ -350,7 +346,7 @@ std::unique_ptr<CanvasTool> makeCanvasTool(Tool kind, Canvas &canvas) {
     case Tool::Lasso:
         return std::make_unique<LassoTool>(canvas);
     case Tool::Crop:
-        return std::make_unique<CropTool>(canvas);
+        return makeCropTool(canvas);
     case Tool::Rectangle:
         return std::make_unique<RectangleTool>(canvas);
     case Tool::Ellipse:

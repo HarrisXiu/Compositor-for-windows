@@ -35,6 +35,7 @@ if(MSVC)
 endif()
 
 add_library(compositor_core STATIC
+    windows/src/layer_operations.cpp windows/src/image_operations.cpp
     windows/src/document.cpp windows/src/render.cpp windows/src/blend.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
 target_include_directories(compositor_core PUBLIC windows/src)
 target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)
@@ -42,6 +43,7 @@ target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Co
 add_library(compositor_ui STATIC
     windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp
     windows/src/editor_menus.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
+    windows/src/editor_layers.cpp windows/src/layer_transfer.cpp windows/src/image_dialogs.cpp windows/src/crop_tool.cpp
     windows/src/document_dialogs.cpp windows/src/filter_dialogs.cpp windows/src/effect_dialogs.cpp
     windows/src/editable_dialogs.cpp windows/src/canvas_tools.cpp windows/src/canvas_paint.cpp
     windows/src/canvas.cpp windows/src/canvas.h windows/src/curve_editor.cpp windows/src/raw_dialog.cpp windows/src/image_scope.cpp windows/src/language.cpp windows/src/language.h)
@@ -93,4 +95,22 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME compositor_dither COMMAND compositor_dither_tests)
     set_tests_properties(compositor_dither PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    qt_add_executable(compositor_layer_tests windows/tests/layer_tests.cpp)
+    target_link_libraries(compositor_layer_tests PRIVATE compositor_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(compositor_layer_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME compositor_layers COMMAND compositor_layer_tests)
+    set_tests_properties(compositor_layers PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    if(WIN32)
+        foreach(target compositor_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests)
+            foreach(library Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Test LibRaw)
+                add_custom_command(TARGET ${target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:${target}>")
+            endforeach()
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/platforms"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>" "$<TARGET_FILE_DIR:${target}>/platforms")
+        endforeach()
+    endif()
 endif()

@@ -2,6 +2,8 @@
 
 **当前 Windows 版尚未完全完成，后续将持续更新。** This is Windows migration preview 0.4, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
 
+移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架与 L1–L4 主要范围已完成；R2–R4 已在独立工作目录实现并通过本地测试，尚待合入和集成验收；高级交互、AI 和完整验收仍待完善。概括计划与进度见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)。版本保持 0.4.0，自动更新继续排除。
+
 ## Run
 
 Extract **the entire** `Compositor-Windows-x64.zip` archive and run `Compositor.exe` in that folder. Keep the DLLs and plugin folders beside the executable. Target: Windows 10/11 x64. This portable preview does not install file associations. Automatic updating is deliberately excluded from the Windows port: there is no update checker, download service or updater in the Windows build.
@@ -20,7 +22,7 @@ From PowerShell at the repository root:
 .\windows\build.ps1 -QtRoot C:\Qt\6.10.2\msvc2022_64 -Package
 ```
 
-The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs five test suites, deploys the Qt/LibRaw DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
+The script fetches the SHA256-pinned LibRaw 0.22.2 Windows SDK once, configures CMake, compiles C/C++, runs six test suites, deploys the Qt/LibRaw DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip`. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
 
 When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
@@ -29,6 +31,9 @@ When publishing a release, attach everything in `artifacts/qt-source/` beside th
 - Multiple project tabs; new, open, import, background save, and PNG/JPEG export with resolution metadata.
 - `.comp` folder structure and versions 1–11; unknown manifest and layer fields are preserved on save. Image paths, layer UUIDs, hierarchy cycles, clipping cycles, masks and file-size limits are validated.
 - Layers, folders, drag reordering and nesting, renaming, duplication, visibility, opacity, all 24 blend modes, raster/folder masks and clipping masks.
+- Layer and mask thumbnails, Ctrl/Shift row selection and a context menu. Click a mask thumbnail to edit it; Ctrl-click either thumbnail to load coverage as an undoable selection. Ctrl+E merges down, merges selected layers or merges the selected folder. Group/ungroup, raise/lower and move out of folder preserve subtree relationships.
+- Ctrl+C/X/V copies/cuts/pastes full selected layer subtrees, including masks and editable metadata. Copies between projects receive new IDs and are centered; drag layers onto another project tab to copy them. Source edits or closing the source project do not invalidate the clipboard snapshot. Layer clipboard data is shared within the running application.
+- Crop tool (`C`) with an editable frame, eight resize handles, ratios including 3:4 and 9:16, canvas/layer/guide edge snapping and an overlay. Enter or double-click applies, Escape cancels; Shift fixes the ratio, Alt resizes from the center and Ctrl disables snapping. Existing selections initialize the frame. Image menu includes nine-anchor Canvas Size with relative/physical units and extension colors, Image Size/DPI/resampling, transparent/corner-color Trim and canvas flips. Resampling rasterizes text, shapes and rotated layers; changing DPI alone preserves pixels.
 - Move, exact position/size/rotation, flips and non-destructive raster transforms.
 - Brush and eraser with size, hardness, opacity, source-resolution painting, selection limits and mask painting; clone stamp and the original C content-aware spot-healing implementation.
 - Rectangle/ellipse/lasso selections, magic wand, selection addition/subtraction, invert and feather.
@@ -56,7 +61,7 @@ History currently retains up to 40 copy-on-write document snapshots; a dedicated
 
 ## Shortcuts
 
-`Ctrl+N/O/S`, `Ctrl+I` import, `Ctrl+J` duplicate, `Ctrl+Z` undo, `Ctrl+Y` redo, `Ctrl+A/D` select/deselect, `Shift+F5` fill, `Delete` clear pixels, `Ctrl+0/1` fit/actual pixels. Tools: `V/B/E/M/L/W/G/U/T/I/S/J/H`. Alt-click sets a clone source; Shift adds a marquee/lasso selection; Alt subtracts. Use the **Paint mask** checkbox to target an existing mask.
+`Ctrl+N/O/S`, `Ctrl+I` import, `Ctrl+J` duplicate, `Ctrl+E` merge, `Ctrl+G` group, `Ctrl+Shift+G` ungroup, `Ctrl+[/]` lower/raise, `Ctrl+C/X/V` layer copy/cut/paste, `Ctrl+Alt+C/I` canvas/image size, `Ctrl+Z` undo, `Ctrl+Y` redo, `Ctrl+A/D` select/deselect, `Shift+F5` fill, `Delete` clear pixels, `Ctrl+0/1` fit/actual pixels. Tools: `V/B/E/M/L/W/C/G/U/T/I/S/J/H`. Alt-click sets a clone source; Shift adds a marquee/lasso selection; Alt subtracts. Use a mask thumbnail or the **Paint mask** checkbox to target an existing mask.
 
 ## Layout
 

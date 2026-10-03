@@ -8,6 +8,20 @@ This fork includes a Windows migration preview built with C++20, Qt 6 and the or
 
 The project and Windows port remain MIT licensed. Automatic updating is excluded from the Windows port; all other original features remain in its migration scope. Qt, LibRaw and Microsoft runtime components retain their respective third-party licenses.
 
+### 移植计划与当前进度
+
+Windows 版使用 C/C++，当前版本保持 **0.4.0**，支持简体中文、英语和日语。移植按“基础能力 → 渲染性能 → 功能与交互完善 → 兼容性及发布验收”推进，目标是逐步对齐原版；自动更新不在移植范围内。
+
+| 方向 | 当前进度 |
+| --- | --- |
+| 项目读写、编辑器框架与基础功能 | 主要完成 |
+| 图层管理、跨项目复制、裁剪和尺寸调整 | L1–L4 主要完成，已通过本地回归 |
+| 大图渲染与绘画性能 | R2–R4 已在独立工作目录实现并通过本地测试，待合入及集成验收 |
+| 高级交互、格式兼容与 AI 工具 | 继续完善；AI 应用功能尚未接入 |
+| 跨平台一致性、兼容性与正式发布 | 待完整验收 |
+
+下一阶段先整合渲染与图层/画布工作，再逐步补齐交互和剩余功能。当前分支六组本地回归共 **192 项通过、0 失败**，另有 1 项可选基准跳过；独立的 `r2-r4-tiled-rendering` 工作目录另有五组 CTest 通过记录，尚未合入当前分支，因此这里仍使用原预览渲染。两套结果不代表合并后的完整验收。后续将持续更新，概况见 [移植进度](windows/PORTING_STATUS.md)。
+
 Adobe Photoshop costs too much and tools like GIMP don’t feel familiar enough for me to stay in flow. That’s why I built Compositor.
 
 The goal was to create a full-featured image editor that is completely free and open source. I used to use Photoshop for compositing and post-processing, so Compositor is built around that workflow - with the tools needed to create a pixel-perfect final image.

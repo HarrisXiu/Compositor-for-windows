@@ -82,17 +82,47 @@ void Canvas::fit() {
     refresh();
 }
 void Canvas::setTool(Tool value) {
-    if (value != session_->tool)
+    if (value != session_->tool) {
         cancelInteraction();
+        session_->cropFrame = {};
+        if (value == Tool::Crop && !session_->selection.isNull())
+            session_->cropFrame = selectionBounds();
+    }
     session_->tool = value;
     setCursor(session_->tool == Tool::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
     update();
     emit sessionChanged();
 }
+void Canvas::applyCropFrame() {
+    const auto frame = session_->cropFrame.normalized();
+    if (frame.width() < 1 || frame.height() < 1)
+        return;
+    cancelInteraction();
+    const QRect bounds(
+        QPoint(int(std::floor(frame.left())), int(std::floor(frame.top()))),
+        QPoint(int(std::ceil(frame.right())) - 1, int(std::ceil(frame.bottom())) - 1));
+    session_->cropFrame = {};
+    emit cropRequested(bounds);
+    update();
+}
+void Canvas::cancelCropFrame() {
+    cancelInteraction();
+    session_->cropFrame = {};
+    update();
+}
+void Canvas::mouseDoubleClickEvent(QMouseEvent *event) {
+    if (session_->tool == Tool::Crop && event->button() == Qt::LeftButton) {
+        applyCropFrame();
+        event->accept();
+    } else
+        QWidget::mouseDoubleClickEvent(event);
+}
 void Canvas::cancelInteraction() {
     if (!dragging_)
         return;
     dragging_ = false;
+    if (session_->tool == Tool::Crop && !temporaryPan_)
+        session_->cropFrame = session_->cropBeforeGesture;
     warp_.reset();
     original_ = {};
     coverage_ = {};

@@ -30,7 +30,8 @@ class EditorPage : public QWidget {
     QStringList importNotes;
     void edit(const QString &label, const std::function<void(Document &)> &operation);
     void record(const QString &label, const Document &before, const Document &after,
-                const QImage &beforeSelection, const QImage &afterSelection);
+                const QImage &beforeSelection, const QImage &afterSelection,
+                const QSet<QString> &beforeLayers = {}, const QSet<QString> &afterLayers = {});
     void changed();
     bool isModified() const {
         return contentState != savedContentState_;
@@ -47,6 +48,7 @@ class EditorPage : public QWidget {
   private:
     Document beforeInteraction_;
     QImage beforeSelection_;
+    QSet<QString> beforeInteractionLayers_;
     quint64 nextContentState_ = 0;
     quint64 savedContentState_ = 0;
     bool interacting_ = false;
@@ -60,6 +62,7 @@ class EditorWindow : public QMainWindow {
 
   protected:
     void closeEvent(QCloseEvent *) override;
+    bool eventFilter(QObject *, QEvent *) override;
 
   private:
     QTabWidget *tabs_;
@@ -102,5 +105,19 @@ class EditorWindow : public QMainWindow {
     void buildPanels();
     void buildToolOptions();
     void syncToolOptions();
+    QSet<QString> selectedLayers() const;
+    void mergeSelectedLayers();
+    void groupSelectedLayers();
+    void ungroupSelectedLayer();
+    void duplicateSelectedLayers();
+    void deleteSelectedLayers();
+    void copySelectedLayers();
+    bool pasteCopiedLayers();
+    void canvasSizeDialog();
+    void imageSizeDialog();
+    void trimDialog();
+    void flipDocument(bool horizontal);
+    void applyCrop(QRect bounds);
+    QAction *mergeAction_ = nullptr;
 };
 } // namespace compositor

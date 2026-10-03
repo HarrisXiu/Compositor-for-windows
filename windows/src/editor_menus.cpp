@@ -3,6 +3,7 @@
 #include "editor.h"
 #include "filters.h"
 #include "language.h"
+#include "layer_operations.h"
 #include "raw_import.h"
 #include "render.h"
 #include <QAction>
@@ -73,6 +74,11 @@ void EditorWindow::buildMenus() {
         }
     });
     edit->addSeparator();
+    action(edit, "Copy Layers", QKeySequence::Copy, [this] { copySelectedLayers(); });
+    action(edit, "Cut Layers", QKeySequence::Cut, [this] {
+        copySelectedLayers();
+        deleteSelectedLayers();
+    });
     action(edit, "Copy Merged", QKeySequence("Ctrl+Shift+C"), [this] {
         if (page()) {
             require(page()->document.previewLimitations().isEmpty(),
@@ -81,6 +87,8 @@ void EditorWindow::buildMenus() {
         }
     });
     action(edit, "Paste Image", QKeySequence::Paste, [this] {
+        if (pasteCopiedLayers())
+            return;
         auto image = QApplication::clipboard()->image();
         require(!image.isNull(), "Clipboard has no image");
         if (!page())
@@ -98,13 +106,26 @@ void EditorWindow::buildMenus() {
         if (page())
             page()->edit("New Folder", [](Document &d) { d.addGroup("Folder"); });
     });
-    action(layer, "Duplicate Layer", QKeySequence("Ctrl+J"), [this] {
+    action(layer, "Duplicate Layer", QKeySequence("Ctrl+J"), [this] { duplicateSelectedLayers(); });
+    action(layer, "Delete Layer", {}, [this] { deleteSelectedLayers(); });
+    action(layer, "Group Layers", QKeySequence("Ctrl+G"), [this] { groupSelectedLayers(); });
+    action(layer, "Ungroup Layers", QKeySequence("Ctrl+Shift+G"),
+           [this] { ungroupSelectedLayer(); });
+    mergeAction_ =
+        action(layer, "Merge Down", QKeySequence("Ctrl+E"), [this] { mergeSelectedLayers(); });
+    action(layer, "Move Layer Up", QKeySequence("Ctrl+]"), [this] {
         if (page())
-            page()->edit("Duplicate Layer", [](Document &d) { d.duplicate(d.activeId()); });
+            page()->edit("Move Layer Up", [&](Document &d) { moveLayers(d, selectedLayers(), 1); });
     });
-    action(layer, "Delete Layer", {}, [this] {
+    action(layer, "Move Layer Down", QKeySequence("Ctrl+["), [this] {
         if (page())
-            page()->edit("Delete Layer", [](Document &d) { d.remove(d.activeId()); });
+            page()->edit("Move Layer Down",
+                         [&](Document &d) { moveLayers(d, selectedLayers(), -1); });
+    });
+    action(layer, "Move Out of Folder", {}, [this] {
+        if (page())
+            page()->edit("Move Out of Folder",
+                         [&](Document &d) { moveLayersOut(d, selectedLayers()); });
     });
     action(layer, "Edit Text…", {}, [this] { editText(); });
     action(layer, "Edit Shape…", {}, [this] { editShape(); });
@@ -253,24 +274,11 @@ void EditorWindow::buildMenus() {
     });
     auto image = menuBar()->addMenu("&Image");
     action(image, "Crop to Selection", {}, [this] { crop(); });
-    action(image, "Canvas Size…", {}, [this] {
-        if (!page())
-            return;
-        bool ok;
-        int w = QInputDialog::getInt(this, "Canvas Size", "Width", page()->document.size().width(),
-                                     1, MaxSide, 1, &ok);
-        if (!ok)
-            return;
-        int h = QInputDialog::getInt(this, "Canvas Size", "Height",
-                                     page()->document.size().height(), 1, MaxSide, 1, &ok);
-        if (ok) {
-            page()->edit("Canvas Size", [&](Document &d) {
-                d.metadata["width"] = w;
-                d.metadata["height"] = h;
-            });
-            page()->canvas->fit();
-        }
-    });
+    action(image, "Canvas Size…", QKeySequence("Ctrl+Alt+C"), [this] { canvasSizeDialog(); });
+    action(image, "Image Size…", QKeySequence("Ctrl+Alt+I"), [this] { imageSizeDialog(); });
+    action(image, "Trim…", {}, [this] { trimDialog(); });
+    action(image, "Flip Canvas Horizontal", {}, [this] { flipDocument(true); });
+    action(image, "Flip Canvas Vertical", {}, [this] { flipDocument(false); });
     for (const auto &kind : QStringList{"Invert", "Exposure", "Levels", "Curves", "Hue/Saturation",
                                         "Black & White", "Gradient Map", "Color Balance"})
         action(image, kind + "…", {}, [this, kind] { filter(kind); });

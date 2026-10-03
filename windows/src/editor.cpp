@@ -15,6 +15,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrentRun>
@@ -30,6 +31,8 @@ EditorWindow::EditorWindow() {
     tabs_ = new QTabWidget(this);
     tabs_->setTabsClosable(true);
     tabs_->setMovable(true);
+    tabs_->tabBar()->setAcceptDrops(true);
+    tabs_->tabBar()->installEventFilter(this);
     setCentralWidget(tabs_);
     buildMenus();
     buildPanels();
@@ -49,6 +52,7 @@ EditorWindow::EditorWindow() {
 QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySequence &shortcut,
                               const std::function<void()> &callback) {
     auto a = menu->addAction(title);
+    a->setProperty("layerAction", title);
     a->setShortcut(shortcut);
     connect(a, &QAction::triggered, this, [this, callback] {
         try {
@@ -76,6 +80,10 @@ void EditorWindow::addPage(Document d, const QString &path) {
             syncToolOptions();
     });
     connect(p->canvas, &Canvas::filesDropped, this, &EditorWindow::importFiles);
+    connect(p->canvas, &Canvas::cropRequested, this, [this, p](QRect bounds) {
+        if (page() == p)
+            applyCrop(bounds);
+    });
     setTool(tool_);
     QTimer::singleShot(0, p->canvas, &Canvas::fit);
     refreshPanels();
@@ -251,22 +259,7 @@ void EditorWindow::crop() {
         return;
     auto bounds = p->canvas->selectionBounds().intersected(QRect(QPoint(), p->document.size()));
     require(!bounds.isEmpty(), "Make a selection to crop");
-    p->edit("Crop Canvas", [&](Document &d) {
-        d.metadata["width"] = bounds.width();
-        d.metadata["height"] = bounds.height();
-        for (auto &l : d.layers)
-            l.move(-QPointF(bounds.topLeft()));
-        auto guides = d.metadata.value("guides").toArray();
-        for (int i = 0; i < guides.size(); ++i) {
-            auto guide = guides[i].toObject();
-            guide["position"] = guide.value("position").toDouble() -
-                                (guide.value("axis") == "horizontal" ? bounds.y() : bounds.x());
-            guides[i] = guide;
-        }
-        if (d.metadata.contains("guides"))
-            d.metadata["guides"] = guides;
-    });
-    p->canvas->fit();
+    applyCrop(bounds);
 }
 bool EditorWindow::canClose(EditorPage *p) {
     if (!p)

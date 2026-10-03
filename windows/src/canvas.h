@@ -17,6 +17,7 @@ class PanTool;
 class EyedropperTool;
 class WandTool;
 class TextTool;
+class CropTool;
 class Canvas : public QWidget {
     Q_OBJECT
   public:
@@ -41,6 +42,8 @@ class Canvas : public QWidget {
     void replaceSelection(const QImage &mask, const QString &label);
     void featherSelection(double radius);
     void cancelInteraction();
+    void applyCropFrame();
+    void cancelCropFrame();
     QRect selectionBounds() const;
     void setTool(Tool value);
     QImage selectionForLayer(const Layer &layer) const;
@@ -54,6 +57,7 @@ class Canvas : public QWidget {
     void selectionChanged();
     void selectionEdited(const QString &label, const QImage &before, const QImage &after);
     void sessionChanged();
+    void cropRequested(QRect bounds);
     void error(const QString &message);
 
   protected:
@@ -62,6 +66,7 @@ class Canvas : public QWidget {
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
     void wheelEvent(QWheelEvent *) override;
     void dragEnterEvent(QDragEnterEvent *) override;
     void dropEvent(QDropEvent *) override;
@@ -103,5 +108,6 @@ class Canvas : public QWidget {
     friend class EyedropperTool;
     friend class WandTool;
     friend class TextTool;
+    friend class CropTool;
 };
 } // namespace compositor

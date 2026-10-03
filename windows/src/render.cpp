@@ -275,7 +275,8 @@ QImage renderDocument(const Document &d, QSize output) {
                 if (c.metadata.value("adjustment").isObject())
                     adjustSurface(stack, d, c, false);
                 else if (!c.image.isNull())
-                    composite(stack, ownSurface(d, c, output), parseBlendMode(c.blend()), effectiveOpacity(d, c));
+                    composite(stack, ownSurface(d, c, output), parseBlendMode(c.blend()),
+                              effectiveOpacity(d, c));
             }
             restoreAlpha(stack, surface);
             folderMasks(stack, d, l);
@@ -294,6 +295,25 @@ QImage renderDocument(const Document &d, QSize output) {
         folderMasks(surface, d, l);
         composite(result, surface, parseBlendMode(l.blend()), effectiveOpacity(d, l));
     }
+    return result;
+}
+QImage bakeClipping(const Document &d, const Layer &l) {
+    const auto source = d.find(normalizedId(l.metadata.value("maskSourceID").toString()));
+    if (!source || l.image.isNull())
+        return l.image;
+    auto coverageImage = coverage(d, *source, d.size());
+    QImage mask(l.image.size(), QImage::Format_RGBA8888_Premultiplied);
+    require(!mask.isNull(), "Not enough memory for clipping");
+    mask.fill(Qt::transparent);
+    QPainter painter(&mask);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.setTransform(l.placement(l.image.size()).inverted());
+    painter.drawImage(0, 0, coverageImage);
+    painter.end();
+    auto result = l.image;
+    QPainter apply(&result);
+    apply.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    apply.drawImage(0, 0, mask);
     return result;
 }
 QImage layerSelection(const Document &d, const Layer &l, const QImage &selection) {

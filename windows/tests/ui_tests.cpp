@@ -171,7 +171,7 @@ class UiTests : public QObject {
         window.show();
         UiLanguage::instance().setLanguage("zh_CN", false);
         QVERIFY(window.menuBar()->actions().first()->text().startsWith("文件"));
-        auto blend = window.findChild<QComboBox *>();
+        auto blend = window.findChild<QComboBox *>("layerBlendMode");
         QVERIFY(blend);
         QCOMPARE(comboValue(blend), QString("Normal"));
         QCOMPARE(blend->currentText(), QString("正常"));

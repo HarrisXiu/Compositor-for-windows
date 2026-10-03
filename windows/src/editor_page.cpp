@@ -11,15 +11,20 @@ class DocumentCommand final : public QUndoCommand {
         : QUndoCommand(label), page_(page), before_(std::move(before)), after_(std::move(after)),
           beforeSelection_(std::move(beforeSelection)), afterSelection_(std::move(afterSelection)),
           beforeState_(page->contentState), afterState_(afterState) {}
+    QSet<QString> beforeLayers, afterLayers;
     void undo() override {
+        page_->session.selectedLayerIDs = beforeLayers;
         apply(before_, beforeSelection_, beforeState_);
     }
     void redo() override {
+        page_->session.selectedLayerIDs = afterLayers;
         apply(after_, afterSelection_, afterState_);
     }
 
   private:
     void apply(const Document &document, const QImage &selection, quint64 state) {
+        if (page_->document.size() != document.size())
+            page_->session.cropFrame = {};
         page_->document = document;
         page_->session.selection = selection;
         page_->contentState = state;
@@ -55,6 +60,8 @@ class SelectionCommand final : public QUndoCommand {
 EditorPage::EditorPage(Document source, QWidget *parent)
     : QWidget(parent), document(std::move(source)), history(this) {
     canvas = new Canvas(&document, &session, this);
+    if (!document.activeId().isEmpty())
+        session.selectedLayerIDs.insert(document.activeId());
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(canvas);
@@ -62,13 +69,15 @@ EditorPage::EditorPage(Document source, QWidget *parent)
     connect(canvas, &Canvas::editStarted, this, [this] {
         beforeInteraction_ = document;
         beforeSelection_ = session.selection;
+        beforeInteractionLayers_ = session.selectedLayerIDs;
         interacting_ = true;
     });
     connect(canvas, &Canvas::editFinished, this, [this](const QString &label) {
         if (!interacting_)
             return;
         interacting_ = false;
-        record(label, beforeInteraction_, document, beforeSelection_, session.selection);
+        record(label, beforeInteraction_, document, beforeSelection_, session.selection,
+               beforeInteractionLayers_, session.selectedLayerIDs);
         beforeInteraction_ = {};
         beforeSelection_ = {};
     });
@@ -76,6 +85,7 @@ EditorPage::EditorPage(Document source, QWidget *parent)
         if (interacting_) {
             document = beforeInteraction_;
             session.selection = beforeSelection_;
+            session.selectedLayerIDs = beforeInteractionLayers_;
             interacting_ = false;
             beforeInteraction_ = {};
             beforeSelection_ = {};
@@ -94,6 +104,15 @@ EditorPage::EditorPage(Document source, QWidget *parent)
     connect(&history, &QUndoStack::cleanChanged, this, [this] { emit documentChanged(); });
 }
 void EditorPage::changed() {
+    QSet<QString> valid;
+    for (const auto &layer : document.layers)
+        if (session.selectedLayerIDs.contains(layer.id()))
+            valid.insert(layer.id());
+    if (!document.activeId().isEmpty())
+        valid.insert(document.activeId());
+    session.selectedLayerIDs = valid;
+    if (!document.active() || document.active()->mask.isNull())
+        session.target = EditTarget::Pixels;
     ++revision;
     canvas->refresh();
     emit documentChanged();
@@ -105,14 +124,23 @@ void EditorPage::markSaved(quint64 state) {
     emit documentChanged();
 }
 void EditorPage::record(const QString &label, const Document &before, const Document &after,
-                        const QImage &beforeSelection, const QImage &afterSelection) {
+                        const QImage &beforeSelection, const QImage &afterSelection,
+                        const QSet<QString> &beforeLayers, const QSet<QString> &afterLayers) {
     try {
         after.validateAssets();
-        history.push(new DocumentCommand(this, label, before, after, beforeSelection,
-                                         afterSelection, ++nextContentState_));
+        auto command = new DocumentCommand(this, label, before, after, beforeSelection,
+                                           afterSelection, ++nextContentState_);
+        command->beforeLayers = beforeLayers.isEmpty() && !before.activeId().isEmpty()
+                                    ? QSet<QString>{before.activeId()}
+                                    : beforeLayers;
+        command->afterLayers = afterLayers.isEmpty() && !after.activeId().isEmpty()
+                                   ? QSet<QString>{after.activeId()}
+                                   : afterLayers;
+        history.push(command);
     } catch (const std::exception &e) {
         document = before;
         session.selection = beforeSelection;
+        session.selectedLayerIDs = beforeLayers;
         changed();
         emit error(QString::fromUtf8(e.what()));
     }
@@ -121,14 +149,19 @@ void EditorPage::edit(const QString &label, const std::function<void(Document &)
     canvas->cancelInteraction();
     auto before = document;
     auto selection = session.selection;
+    auto selectedLayers = session.selectedLayerIDs;
     try {
         operation(document);
-        if (document.size() != before.size())
+        if (document.size() != before.size()) {
             session.selection = {};
-        record(label, before, document, selection, session.selection);
+            session.cropFrame = {};
+        }
+        record(label, before, document, selection, session.selection, selectedLayers,
+               session.selectedLayerIDs);
     } catch (const std::exception &e) {
         document = before;
         session.selection = selection;
+        session.selectedLayerIDs = selectedLayers;
         changed();
         emit error(QString::fromUtf8(e.what()));
     }
