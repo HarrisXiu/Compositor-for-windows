@@ -28,17 +28,24 @@ When publishing a release, attach everything in `artifacts/qt-source/` beside th
 
 ## Local AI runtime and models (AI1)
 
-**Help > AI Models…** (**帮助 > AI 模型…**) opens the model manager. BiRefNet Lite (181,695,409 bytes), SAM 2 Hiera Tiny (126,036,117 bytes), and MobileSAM (44,466,658 bytes) have fixed SHA256 hashes and separate licenses. Models live in Windows local application data under Compositor/Models/. No model weights or Python runtime are bundled with the editor.
+AI1's C++ inference foundation and model manager are integrated. The current supported backends are:
 
-The model release remains unpublished by request. Download/Resume and Restart remain disabled until a separately authorized release updates the catalog. Use **Import Local Files…** with matching ONNX files from the locally staged model release. Missing/corrupt files are rejected; verified bytes are installed atomically with each model's license/notice. Installed models stay usable offline. Optional HTTPS downloading supports cancellation, strong-ETag/Range resumption, server restart, bounded writes and size/SHA256 verification. Install locks prevent simultaneous processes modifying one model.
+| Hardware | Current inference path |
+| --- | --- |
+| Supported Intel integrated GPU | DirectML with portable kernels; CPU fallback on failure |
+| Intel integrated GPU plus NVIDIA/AMD GPU | Automatically select the supported Intel GPU |
+| NVIDIA/AMD, discrete Intel, or no supported Intel integrated GPU | CPU; no DirectML inference on those adapters |
+| NVIDIA CUDA | Deferred; not implemented |
 
-ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 are SHA256-pinned SDKs and dynamically deployed runtimes. DirectML is enabled only on Intel integrated GPUs (Intel vendor and D3D12 unified-memory architecture); automatic selection excludes NVIDIA, AMD and discrete Intel adapters. NVIDIA/AMD use CPU, and NVIDIA CUDA is deferred and not implemented. DirectML is preferred on a supported Intel integrated adapter; initialization/execution failures fall back to CPU under the normal policy, retaining a reason. The probe's dml policy does not silently fall back an entire session, though unsupported nodes may run on CPU. Intel defaults to portable DirectML kernels: vendor metacommands exceeded MobileSAM FP32 tolerances, while the portable path passed unchanged thresholds and still executed GPU nodes. Background sessions support cancellation and SAM encoder reuse.
+**Help > AI Models…** (**帮助 > AI 模型…**) manages BiRefNet Lite, SAM 2 Hiera Tiny and MobileSAM. Use **Import Local Files…** to install matching ONNX files; size/SHA256 and licenses are checked, and verified models remain usable offline. The model release is unpublished, so Download/Resume and Restart remain disabled. The editor does not bundle model weights or Python.
 
-SAM 2's MergeShapeInfo warning was traced to a wrong [5] output annotation inside an unused nested Tile If branch. Removing only that annotation resolves strict shape inference. All nine encoder outputs on three images are CPU bitwise identical; computation/weights are unchanged. Corrected encoder SHA256: 461ce21868f57db114211d09d2c853bc02e7e9a3034cdab71d00a81d3a0767a5.
+Sessions use ONNX Runtime DirectML 1.24.4 / DirectML 1.15.4, run in the background, support cancellation and reuse SAM encoder features between clicks. Device loss and nonfinite outputs trigger a CPU retry under the normal policy with a diagnostic reason. Strict DirectML verification rejects unsupported adapters or GPU failures. Application subject/object selection, matte refinement and background-removal interactions remain later work.
 
-CPU inference uses half the available logical processors, bounded to 1–12 threads. On the i9-13900HX, Lite's six unprofiled runs averaged 9.92 s at 4 threads, 5.26 s at 8, and 3.80 s at 12, excluding load/preprocessing. These are measurements on this machine, not a universal speed guarantee.
+Current validation: Release build and eight CTest suites pass; all four reference models pass **150/150 Intel UHD GPU checks**. A packaged run with an explicitly selected NVIDIA adapter passes **132/132 checks on CPU**, with zero DirectML profiler nodes. These establish numerical fidelity and runtime regression on the recorded hardware, not labeled segmentation quality or Mac parity. NVIDIA/AMD DirectML failures are preserved as historical evidence outside the current support scope. A physical no-DX12 machine remains a separate CPU fallback acceptance item.
 
-The local Release build and eight CTest suites pass. CPU, NVIDIA RTX 4080 Laptop and Intel UHD checks compare outputs, chosen SAM candidate identity, iterative masks, C++ preprocessing and encoder reuse against Python reference tensors from three real images. GPU reports require executed DirectML nodes. This is numerical fidelity, not ground-truth quality or Mac parity. NVIDIA/AMD DirectML is outside the current acceptance scope; their earlier failures remain historical evidence. Physical machines without hardware DX12 remain pending for CPU fallback acceptance. See [AI1 report](AI1_REPORT.md) and [cross-machine self-test instructions](AI1_SELF_TEST.md). The self-test needs neither Python nor developer tools and produces a report ZIP to bring back.
+Use the complete offline test bundle: extract the entire **AI1-complete-self-test.zip**, double-click **开始测试.cmd**, then return the generated **results ZIP**. No old bundle, Python, Qt installation, developer tools, network connection or administrator access is required. Models, references, application/test binaries, runtime DLLs and licenses are included.
+
+See [AI1 README](AI1_README.md) for the current delivery, model sizes, verification and remaining work; [self-test instructions](AI1_SELF_TEST.md) for optional test controls; and [acceptance evidence](AI1_REPORT.md) for report locations. No remote Release, upload or push is performed.
 
 ## Offline AI model export (AI1)
 
