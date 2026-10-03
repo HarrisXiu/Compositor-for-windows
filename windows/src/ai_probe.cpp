@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
     parser.addHelpOption();
     parser.addOption({"references", "Local Python reference manifest", "file"});
     parser.addOption({"provider", "cpu, prefer or dml (dml never silently falls back)", "policy", "cpu"});
-    parser.addOption({"adapter", "DXGI adapter index; -1 selects a compatible high-performance GPU", "index", "-1"});
+    parser.addOption({"adapter", "DXGI adapter index; -1 selects a supported Intel integrated GPU", "index", "-1"});
     parser.addOption({"output", "JSON verification report", "file"});
     parser.addOption({"write-model-licenses", "Write bundled licenses/notices for each catalog model", "directory"});
     parser.addOption({"catalog", "Write the built-in release catalog as JSON", "file"});
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
     parser.addOption({"no-profile", "Disable profiling for CPU timing only"});
     parser.addOption({"repeat", "Repeat BiRefNet timing runs per image", "count", "1"});
     parser.addOption({"threads", "CPU intra-op thread count", "count", QString::number(aiDefaultThreads())});
-    parser.addOption({"vendor-metacommands", "Diagnostic override of Intel/AMD compatibility defaults"});
+    parser.addOption({"vendor-metacommands", "Diagnostic override of Intel compatibility defaults"});
     parser.addOption({"disable-metacommands", "Use portable DirectML kernels for driver diagnostics"});
     parser.addOption({"disable-dml-graph-fusion", "Disable DirectML graph fusion for reuse diagnostics"});
     parser.addOption({"disable-dml-memory-arena", "Disable DirectML memory arena for reuse diagnostics"});
@@ -178,14 +178,16 @@ int main(int argc, char **argv) {
     QJsonArray devices;
     for (const auto &adapter : aiAdapters())
         devices.append(QJsonObject{{"index", adapter.index}, {"name", adapter.name}, {"vendor", int(adapter.vendor)},
-                                  {"dedicated_memory", double(adapter.dedicatedMemory)}, {"directx12", adapter.directX12}, {"software", adapter.software}});
+                                  {"dedicated_memory", double(adapter.dedicatedMemory)}, {"directx12", adapter.directX12}, {"software", adapter.software},
+                                  {"unified_memory", adapter.unifiedMemory}, {"directml_supported", adapter.directMLSupported()}});
     if (parser.isSet("list-adapters")) {
         std::puts(QJsonDocument(devices).toJson().constData());
         return 0;
     }
     QJsonObject report{{"status", "incomplete"}, {"utc", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
                        {"os", QSysInfo::prettyProductName()}, {"native_onnxruntime", aiRuntimeVersion()}, {"adapters", devices}, {"requested_provider", parser.value("provider")},
-                       {"quality_scope", "ONNX numerical fidelity, not ground-truth segmentation quality"}};
+                       {"quality_scope", "ONNX numerical fidelity, not ground-truth segmentation quality"},
+                       {"directml_scope", "intel-integrated-only"}, {"cuda_available", false}};
     QJsonArray checks, models;
     try {
         require(parser.isSet("references") && parser.isSet("output"), "--references and --output are required");

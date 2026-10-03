@@ -101,8 +101,9 @@ def main():
         "Encoder/decoder pairs support image feature reuse, point prompts and iterative refinement. "
         "Retain each model's complete notices/ folder, upstream model card and validation reports with redistribution.\n\n"
         "Validation measures numerical fidelity on three upstream SAM 2 images, not labeled segmentation "
-        "quality, portrait/hair acceptance, Mac parity or universal speed. AMD and machines without "
-        "hardware DirectX 12 require separate hardware reports. No signing is performed.\n",
+        "quality, portrait/hair acceptance, Mac parity or universal speed. DirectML is supported only "
+        "on Intel integrated GPUs; NVIDIA/AMD use CPU. NVIDIA CUDA is deferred and not implemented. "
+        "Machines without a supported Intel integrated GPU require CPU fallback reports. No signing is performed.\n",
         encoding="utf-8")
     sums = {path.relative_to(release).as_posix(): sha256(path) for path in sorted(release.rglob("*")) if path.is_file()}
     (release / "SHA256SUMS.json").write_text(json.dumps(sums, indent=2) + "\n", encoding="utf-8")

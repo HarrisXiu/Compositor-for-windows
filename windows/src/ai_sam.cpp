@@ -9,10 +9,6 @@ std::shared_ptr<AiSamModel> AiSamModel::open(QString encoder, QString decoder, A
     auto model = std::shared_ptr<AiSamModel>(new AiSamModel);
     model->kind_ = kind;
     auto encoderOptions = options, decoderOptions = options;
-    if (kind == AiImageKind::MobileSAM) {
-        encoderOptions.disableMetacommandsOnAmd = true;
-        decoderOptions.disableMetacommandsOnAmd = true;
-    }
     if (!options.profilePrefix.isEmpty()) {
         encoderOptions.profilePrefix += "-encoder";
         decoderOptions.profilePrefix += "-decoder";

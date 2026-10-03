@@ -101,20 +101,25 @@ try {
         $taskOutput = Join-Path $taskRun 'cpu-lite-timing.json'
         $null = Invoke-AiCheck 'cpu-lite-timing' $taskProbe @('--references',$taskManifest,'--provider','cpu','--model','birefnet-lite','--threads',"$Threads",'--no-profile','--repeat','3','--output',$taskOutput)
     }
-    $taskDevices = @($taskAdapters | Where-Object { $_.directx12 -and -not $_.software })
-    Write-Host ('Hardware DX12 adapters detected: ' + $taskDevices.Count)
+    $taskDevices = @($taskAdapters | Where-Object { $_.directml_supported })
+    Write-Host ('Supported Intel integrated adapters detected: ' + $taskDevices.Count)
+    foreach ($taskAdapter in $taskAdapters) {
+        if ($taskAdapter.directml_supported) { continue }
+        $taskResults.Add([pscustomobject]@{name="dml-$($taskAdapter.index)";status='skipped';
+            reason='DirectML scope is Intel integrated GPUs only; NVIDIA CUDA is deferred. This adapter uses CPU.'})
+    }
     if ($AdapterIndex -ge 0) {
         $taskDevices = @($taskDevices | Where-Object { $_.index -eq $AdapterIndex })
-        if (-not $taskDevices.Count -and -not $CpuOnly) { throw 'The selected adapter does not support DirectX 12.' }
+        if (-not @($taskAdapters | Where-Object { $_.index -eq $AdapterIndex }).Count) { throw 'The selected adapter does not exist.' }
     }
-    if (-not $taskDevices.Count -and $AdapterIndex -lt 0) {
-        $taskOutput = Join-Path $taskRun 'no-dx12-auto-fallback.json'
-        $null = Invoke-AiCheck 'no-dx12-auto-fallback' $taskProbe @('--references',$taskManifest,'--provider','prefer','--threads',"$Threads",'--output',$taskOutput)
+    if (-not $taskDevices.Count -and -not $CpuOnly) {
+        $taskOutput = Join-Path $taskRun 'cpu-fallback-policy.json'
+        $null = Invoke-AiCheck 'cpu-fallback-policy' $taskProbe @('--references',$taskManifest,'--provider','prefer','--adapter',"$AdapterIndex",'--threads',"$Threads",'--output',$taskOutput)
         $taskFallback = Get-Content -LiteralPath $taskOutput -Raw | ConvertFrom-Json
         foreach ($taskModel in $taskFallback.models) {
             foreach ($taskImage in $taskModel.images) {
                 if ($taskImage.encoder.backend -ne 'CPU' -or -not $taskImage.encoder.fallback_reason) {
-                    throw 'Automatic no-DX12 fallback did not actually use CPU with a diagnostic reason.'
+                    throw 'Intel-only DirectML policy did not actually fall back to CPU with a diagnostic reason.'
                 }
                 foreach ($taskClick in $taskImage.clicks) {
                     if ($taskClick.backend -ne 'CPU' -or -not $taskClick.fallback_reason) {
@@ -167,7 +172,7 @@ try {
             }
         }
     } else {
-        $taskResults.Add([pscustomobject]@{ name = 'gpu-fidelity'; status = 'skipped'; reason = $(if ($CpuOnly) { 'CPU-only run requested.' } else { 'No hardware DirectX 12 adapter detected; GPU acceptance is not claimed.' }) })
+        $taskResults.Add([pscustomobject]@{ name = 'gpu-fidelity'; status = 'skipped'; reason = $(if ($CpuOnly) { 'CPU-only run requested.' } else { 'No selected Intel integrated GPU is supported; GPU acceptance is not claimed.' }) })
     }
 } catch {
     $taskResults.Add([pscustomobject]@{ name = 'self-test'; status = 'failed'; error = $_.Exception.Message })
@@ -195,6 +200,8 @@ $taskSummary = [ordered]@{
     scope = 'ONNX numerical fidelity and runtime/packaging regression; not ground-truth segmentation quality or Mac parity.'
     cpu_requested = (-not $SkipCpu)
     gpu_requested = (-not $CpuOnly)
+    directml_scope = 'intel-integrated-only'
+    cuda_available = $false
     tests = @($taskResults.ToArray())
 }
 $taskSummary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $taskRun 'summary.json') -Encoding utf8

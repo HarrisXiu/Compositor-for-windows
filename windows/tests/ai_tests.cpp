@@ -24,6 +24,41 @@ class AiTests : public QObject {
         const auto bytes = QByteArray::fromBase64("CAk6mAEKFwoBeAoFc2NhbGUSBnNjYWxlZCIDTXVsChYKBnNjYWxlZAoEYmlhcxIBeSIDQWRkEgphaV9maXh0dXJlKg8QAUIFc2NhbGVKBAAAAEAqDhABQgRiaWFzSgQAAIA/WhsKAXgSFgoUCAESEAoCCAEKAggDCgIIAgoCCAJiGwoBeRIWChQIARIQCgIIAQoCCAMKAggCCgIIAkIECgAQEQ==");
         QCOMPARE(file.write(bytes), bytes.size());
     }
+    void directMLSupportScope() {
+        AiAdapter intel{0, "Intel integrated", 0x8086, 0, true, false, true};
+        QVERIFY(intel.directMLSupported());
+        auto discreteIntel = intel;
+        discreteIntel.unifiedMemory = false;
+        QVERIFY(!discreteIntel.directMLSupported());
+        auto amd = intel;
+        amd.vendor = 0x1002;
+        QVERIFY(!amd.directMLSupported());
+        auto nvidia = intel;
+        nvidia.vendor = 0x10de;
+        QVERIFY(!nvidia.directMLSupported());
+        intel.directX12 = false;
+        QVERIFY(!intel.directMLSupported());
+        intel.directX12 = true;
+        intel.software = true;
+        QVERIFY(!intel.directMLSupported());
+    }
+    void unsupportedDirectMLAdapterUsesCpu() {
+        for (const auto &adapter : aiAdapters()) {
+            if (adapter.directMLSupported()) continue;
+            AiOptions options;
+            options.adapterIndex = adapter.index;
+            // Diagnostic flags must never bypass the supported-hardware gate.
+            options.allowVendorMetacommands = true;
+            options.disableDmlGraphFusion = true;
+            auto session = AiSession::open(model_, options);
+            auto result = session->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))});
+            QCOMPARE(result.backend, QString("CPU"));
+            QVERIFY(result.fallbackReason.contains("Intel integrated GPUs only"));
+            QCOMPARE(result.outputs.first().floatValues().first(), 7.0f);
+            options.policy = AiProviderPolicy::DirectMLOnly;
+            QVERIFY_EXCEPTION_THROWN(AiSession::open(model_, options), std::exception);
+        }
+    }
     void defaultThreadBudget() {
         QVERIFY(aiDefaultThreads() >= 1 && aiDefaultThreads() <= 12);
         QCOMPARE(AiOptions().threads, aiDefaultThreads());
@@ -71,8 +106,12 @@ class AiTests : public QObject {
             QSKIP("Opt-in DirectML nonfinite regression");
         AiOptions options;
         for (const auto &adapter : aiAdapters())
-            if (adapter.directX12) { options.adapterIndex = adapter.index; break; }
-        QVERIFY(options.adapterIndex >= 0);
+            if (adapter.directMLSupported()) { options.adapterIndex = adapter.index; break; }
+        if (options.adapterIndex < 0) QSKIP("No supported Intel integrated GPU is available");
+        auto automatic = AiSession::open(model_);
+        const auto automaticResult = automatic->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))});
+        QCOMPARE(automaticResult.backend, QString("DirectML+CPU"));
+        QVERIFY(automaticResult.adapter.contains("Intel", Qt::CaseInsensitive));
         const QList<AiTensor> inputs{AiTensor::floats("x", {1, 3, 2, 2},
             QVector<float>(12, std::numeric_limits<float>::quiet_NaN()))};
         options.policy = AiProviderPolicy::DirectMLOnly;
@@ -106,8 +145,8 @@ class AiTests : public QObject {
         AiOptions options;
         auto adapters = aiAdapters();
         for (const auto &adapter : adapters)
-            if (adapter.directX12) { options.adapterIndex = adapter.index; break; }
-        QVERIFY(options.adapterIndex >= 0);
+            if (adapter.directMLSupported()) { options.adapterIndex = adapter.index; break; }
+        if (options.adapterIndex < 0) QSKIP("No supported Intel integrated GPU is available");
         const QList<AiTensor> inputs{AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))};
         for (int iteration = 0; iteration < 5; ++iteration) {
             auto disposable = AiSession::open(model_, options);

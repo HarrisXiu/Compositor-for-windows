@@ -122,8 +122,8 @@ try {
     $taskAdapterData | Set-Content -LiteralPath (Join-Path $taskRun 'adapters.json') -Encoding utf8
     $taskAdapters = @()
     foreach ($taskAdapter in (ConvertFrom-Json -InputObject ($taskAdapterData -join [Environment]::NewLine))) { $taskAdapters += $taskAdapter }
-    $taskDevices = @($taskAdapters | Where-Object { $_.directx12 -and -not $_.software -and ($AdapterIndex -lt 0 -or $_.index -eq $AdapterIndex) })
-    if (-not $taskDevices.Count) { throw 'No requested hardware DX12 adapter is available. GPU acceptance cannot be claimed.' }
+    $taskDevices = @($taskAdapters | Where-Object { $_.directml_supported -and ($AdapterIndex -lt 0 -or $_.index -eq $AdapterIndex) })
+    if (-not $taskDevices.Count) { throw 'No requested Intel integrated GPU is supported. GPU acceptance cannot be claimed.' }
     $taskDefinitions = (Get-Content -LiteralPath $taskManifest -Raw | ConvertFrom-Json).models
     if (-not $Models.Count) { throw 'Select at least one model.' }
     foreach ($taskId in $Models) {

@@ -9,7 +9,7 @@
 
 例如原包位于 G:/AI1-self-test/AI1-self-test，新工具位于 G:/AI1-gpu-retest，也能自动定位。无需手工移动模型、改目录名或编辑脚本。启动时会打印实际使用的原包路径。
 
-无需联网、安装软件或管理员权限。首次运行会把原包中已校验的 DLL 复制到探针旁边，避免 Windows 系统中的旧版 ONNX Runtime 抢先加载。默认测所有支持 DX12 的硬件适配器，包括虚拟显示驱动暴露的重复索引；约需数分钟，失败后的定位检查可能延长时间。
+无需联网、安装软件或管理员权限。首次运行会把原包中已校验的 DLL 复制到探针旁边，避免 Windows 系统中的旧版 ONNX Runtime 抢先加载。当前只测受支持的 Intel 核显 DirectML 适配器；NVIDIA/AMD 已退出此工具的 GPU 范围，无 Intel 核显时请使用完整包验证 CPU 回退。约需数分钟，失败后的定位检查可能延长时间。
 
 原 results-20261003-180958：基础测试和 CPU 132/132 通过；Ryzen 7800X3D 的 Lite 九次平均约 3.9 秒/图。RTX 4070 SUPER 的 SAM 2/MobileSAM 通过；BiRefNet/Lite 有严重误差。AMD 核显完整 BiRefNet 出现 0x887A0006，后续模型当时未执行。通用算子诊断也失败。根因尚未确认。
 

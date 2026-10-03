@@ -1,6 +1,14 @@
 # AI1 implementation and acceptance — 2026-10-03
 
-AI1's local implementation is integrated and regression-tested. Full acceptance remains open: returned AMD/NVIDIA evidence contains GPU failures, and physical machines without a DX12 GPU remain untested. No remote Release, model upload, push or signing is performed.
+AI1's local implementation is integrated and regression-tested. Current DirectML scope is Intel integrated GPUs only; NVIDIA/AMD use CPU, and NVIDIA CUDA is deferred. Historical NVIDIA/AMD GPU failures are outside this scope and remain preserved as failures. Physical machines without a DX12 GPU remain untested for CPU fallback acceptance. No remote Release, model upload, push or signing is performed.
+
+## Current supported backends
+
+By the user's latest decision, DirectML is limited to Intel integrated GPUs. NVIDIA/AMD DirectML work and acceptance are discontinued; NVIDIA CUDA is a later task and is not available in this implementation. A hybrid Intel/NVIDIA computer automatically selects the Intel GPU. A computer without supported Intel integrated graphics uses CPU immediately, retaining an explanation. An explicit unsupported adapter also falls back under PreferDirectML; DirectMLOnly rejects it before registering the provider. Diagnostic switches cannot bypass the hardware gate.
+
+Eligibility requires Intel vendor 0x8086, hardware DX12 support and D3D12 UMA; discrete Intel adapters are excluded. UMA comes from the architecture feature query, not a guessed name or dedicated-memory size. See [Microsoft architecture documentation](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_feature_data_architecture1). If the query is unavailable, the adapter is not eligible.
+
+The complete self-test records all adapters but runs strict GPU fidelity only on supported Intel integrated GPUs. Other adapters are skipped with an out-of-scope reason; absence of supported Intel graphics triggers an actual CPU fallback check. A skipped GPU check is never a passing GPU result. All older multi-vendor validation and diagnostic sections below are historical evidence under the former support scope.
 
 ## Implementation
 
@@ -52,7 +60,7 @@ Updated Release passes all eight CTest suites. A separate opt-in directMLDeviceL
 
 ## Remaining acceptance
 
-- Returned AMD integrated / RTX 4070 SUPER BiRefNet device hangs remain unresolved; verify the new MobileSAM policy and graph-fusion diagnostics on that machine.
+- NVIDIA/AMD DirectML acceptance is retired by user decision; unresolved hangs remain historical failures. NVIDIA CUDA is deferred.
 - Physical no-DX12 machine: confirm automatic CPU fallback and usable performance.
 - Hardware-wide speed/memory, segmentation ground-truth quality and Mac parity remain unproven.
 - Subject/object selection, matte refinement and background-removal UI are later application tools.
@@ -62,7 +70,7 @@ Local release materials contain sizes/hashes, provenance, model cards, separate 
 
 The diagnostic launcher now discovers bundles placed alongside it or under repeated AI1-self-test extraction directories, and offers a folder picker when automatic discovery fails. Windows PowerShell 5.1 layout checks pass 8/8 (inside/sibling/double extraction, explicit outer directory, Chinese/spaced paths and missing files); the actual existing bundle also resolves. This changes launcher paths only; the previously validated native probe is unchanged.
 
-A complete standalone self-test bundle now includes full BiRefNet, Lite, SAM 2, MobileSAM, all reference tensors/images, the current application/probe/test binaries, runtime DLLs and licenses. Its sole launcher is 开始测试.cmd; base-package discovery and folder selection are unnecessary. The standard script includes automatic GPU failure diagnostics and verifies every repeated BiRefNet result. SHA256 uses the framework directly to avoid an observed Get-FileHash auto-loading failure during CMD launch. The extracted bundle's launcher passed integrity/TLS, all eight suites, application smoke, CPU 132/132 and RTX 4080 Laptop 150/150, then generated results-20261003-071053.zip. Other adapters' probe validation from earlier runs remains separate; the returned AMD/4070 SUPER acceptance is still open.
+A complete standalone self-test bundle now includes full BiRefNet, Lite, SAM 2, MobileSAM, all reference tensors/images, the current application/probe/test binaries, runtime DLLs and licenses. Its sole launcher is 开始测试.cmd; base-package discovery and folder selection are unnecessary. The standard script includes automatic GPU failure diagnostics and verifies every repeated BiRefNet result. SHA256 uses the framework directly to avoid an observed Get-FileHash auto-loading failure during CMD launch. The extracted bundle's launcher passed integrity/TLS, all eight suites, application smoke, CPU 132/132 and RTX 4080 Laptop 150/150, then generated results-20261003-071053.zip. Other adapters' probe validation from earlier runs remains separate; the historical returned AMD/4070 SUPER failures remain preserved outside the new support scope.
 
 
 ## Returned complete-bundle evidence: results-20261003-202225
@@ -88,3 +96,17 @@ Automatic BiRefNet failure diagnostics additionally isolate graph fusion, with b
 Local diagnostic evidence: RTX 4080 Laptop Lite with graph fusion disabled passes 13/13 checks, including nine runs and actual GPU nodes. Warm runs take about 213–225 ms; the first run is about 1008 ms. Disabling only the DML memory arena instead reports device hung on this local GPU. That failed experiment is retained as local-lite-no-arena-v2.json and is not a compatibility fix or an automatic self-test stage. The manual probe option remains for controlled investigation. Neither experiment establishes the returned machine's root cause.
 
 Updated Release passes all eight suites. The opt-in nonfiniteDirectMLOutputFallsBack regression passes 3/3 Qt cases with no skips; CPU tests cover NaN and both infinities. Intel UHD passes 150/150 actual-model checks. The complete-bundle CMD launch passes all 17 stages, including CPU 132/132 and RTX 4080 Laptop 150/150, and produces results-20261003-075009.zip. The final script revision replaces the unsuccessful arena experiment with a no-fusion/portable combination; Windows PowerShell 5.1 parses it and a mock of the actual failure branch verifies all five diagnostic commands. This local evidence does not claim returned AMD/4070 acceptance.
+
+
+The AMD-specific MobileSAM compatibility switch is removed because AMD never registers DirectML now. Intel portable kernels, device-removal detection, finite-output validation, CPU fallback, cancellation and SAM cache reuse remain. Previous logs/models are unchanged; no old failed result was relabeled as passing.
+
+
+## Intel-only scope validation
+
+Updated Release builds successfully and passes all eight CTest suites. Policy tests reject AMD/NVIDIA, discrete Intel, software and non-DX12 fixtures; actual unsupported adapters return correct CPU outputs and strict mode rejects them even with diagnostic flags. On the Intel UHD / RTX 4080 hybrid development machine, automatic strict DirectML selection runs all four models on Intel UHD and passes 150/150 numerical/GPU checks. Opt-in nonfinite and device-loss Intel regressions each pass 3/3 Qt cases with no skips.
+
+Windows PowerShell 5.1 scope-branch checks pass 4/4: AMD/NVIDIA-only inventory, hybrid automatic selection, explicit NVIDIA and explicit Intel. These fixture checks are not physical AMD hardware acceptance. The new complete ZIP verifies all 263 files against SHA256 and matches the built native binaries and script source.
+
+The extracted complete bundle's CMD entry was run with -SkipCpu -AdapterIndex 0 to exercise an explicitly selected NVIDIA adapter. Integrity, runtime/TLS, eight suites and application smoke pass. All 132 actual-model fallback checks pass with CPU backends and diagnostics, and every encoder/decoder profiler contains zero DirectML nodes. NVIDIA's GPU stages are skipped. This does not simulate physical absence of DX12 or reclassify historical failures. The resulting report is results-20261003-082658.
+
+The current complete bundle is artifacts/ai1/intel-only-self-test/AI1-complete-self-test.zip. It contains all models/references/binaries/dependencies/licenses, and its default launcher requires no settings or previous package. NVIDIA CUDA remains deferred. No push, upload or remote Release is performed.

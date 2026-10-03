@@ -117,6 +117,9 @@ int aiDefaultThreads() {
 QString aiRuntimeVersion() {
     return QString::fromUtf8(OrtGetApiBase()->GetVersionString());
 }
+bool AiAdapter::directMLSupported() const {
+    return vendor == 0x8086 && directX12 && !software && unifiedMemory;
+}
 QList<AiAdapter> aiAdapters() {
     using Microsoft::WRL::ComPtr;
     ComPtr<IDXGIFactory1> factory;
@@ -135,7 +138,12 @@ QList<AiAdapter> aiAdapters() {
         ComPtr<ID3D12Device> device;
         const bool software = description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE;
         const bool supported = !software && SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.GetAddressOf())));
-        result.push_back({int(index), QString::fromWCharArray(description.Description), description.VendorId, quint64(description.DedicatedVideoMemory), supported, software});
+        D3D12_FEATURE_DATA_ARCHITECTURE1 architecture{};
+        const bool unified = supported &&
+            SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE1, &architecture, sizeof(architecture))) &&
+            architecture.UMA;
+        result.push_back({int(index), QString::fromWCharArray(description.Description), description.VendorId,
+                          quint64(description.DedicatedVideoMemory), supported, software, unified});
     }
     return result;
 }
@@ -173,13 +181,13 @@ struct AiSession::Impl {
             quint64 memory = 0;
             if (index < 0) {
                 for (const auto &device : devices)
-                    if (device.directX12 && (index < 0 || device.dedicatedMemory > memory)) {
+                    if (device.directMLSupported() && (index < 0 || device.dedicatedMemory > memory)) {
                         index = device.index;
                         memory = device.dedicatedMemory;
                     }
             }
-            auto found = std::find_if(devices.begin(), devices.end(), [index](const auto &device) { return device.index == index && device.directX12; });
-            require(found != devices.end(), "No compatible DirectX 12 GPU is available for the selected adapter");
+            auto found = std::find_if(devices.begin(), devices.end(), [index](const auto &device) { return device.index == index && device.directMLSupported(); });
+            require(found != devices.end(), "DirectML supports Intel integrated GPUs only; no supported Intel GPU is available for the selected adapter");
             const OrtDmlApi *dml = nullptr;
             Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void **>(&dml)));
             configuration.DisableMemPattern();
@@ -187,10 +195,8 @@ struct AiSession::Impl {
                 configuration.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
             if (options.disableDmlMemoryArena)
                 configuration.AddConfigEntry("ep.dml.disable_memory_arena", "1");
-            // Intel fidelity and AMD MobileSAM nonfinite outputs require portable kernels.
-            metacommandsDisabled = options.disableMetacommands ||
-                (!options.allowVendorMetacommands &&
-                 (found->vendor == 0x8086 || (found->vendor == 0x1002 && options.disableMetacommandsOnAmd)));
+            // Intel's vendor kernels exceed MobileSAM's FP32 fidelity tolerance.
+            metacommandsDisabled = options.disableMetacommands || !options.allowVendorMetacommands;
             if (metacommandsDisabled) {
                 const auto device = QByteArray::number(index);
                 const char *keys[]{"device_id", "disable_metacommands"};

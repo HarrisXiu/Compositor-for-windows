@@ -56,7 +56,6 @@ struct AiOptions {
     QString profilePrefix;
     bool disableMetacommands = false;
     bool allowVendorMetacommands = false;
-    bool disableMetacommandsOnAmd = false;
     bool disableDmlGraphFusion = false;
     bool disableDmlMemoryArena = false;
 };
@@ -67,6 +66,8 @@ struct AiAdapter {
     quint64 dedicatedMemory = 0;
     bool directX12 = false;
     bool software = false;
+    bool unifiedMemory = false;
+    bool directMLSupported() const;
 };
 QList<AiAdapter> aiAdapters();
 QString aiRuntimeVersion();
