@@ -122,8 +122,7 @@ static void fill(QImage &result, const QImage &coverage, const QJsonObject &e,
         }
     }
 }
-EffectImage renderEffects(const QImage &shown, const QJsonObject &effects) {
-    validateEffects(effects);
+int effectsInset(const QJsonObject &effects) {
     auto enabled = [&](const char *key) {
         auto e = effects.value(QLatin1String(key)).toObject();
         return !e.isEmpty() && e.value("enabled").toBool(true);
@@ -137,19 +136,46 @@ EffectImage renderEffects(const QImage &shown, const QJsonObject &effects) {
         margin = std::max(margin, number(shadow, "distance", 20) + 3 * number(shadow, "blur", 20));
     if (enabled("outerGlow"))
         margin = std::max(margin, 3 * number(outer, "size", 20));
-    int inset = int(std::ceil(margin)) + 2;
-    QSize size = shown.size() + QSize(inset * 2, inset * 2);
-    require(size.width() <= MaxSide && size.height() <= MaxSide &&
-                qint64(size.width()) * size.height() <= MaxSurfacePixels,
-            "Layer effects exceed surface limit");
-    QImage pixels(size, QImage::Format_RGBA8888_Premultiplied), result(size, pixels.format());
-    require(!pixels.isNull() && !result.isNull(), "Not enough memory for effects");
-    pixels.fill(Qt::transparent);
+    return int(std::ceil(margin)) + 2;
+}
+int effectsReach(const QJsonObject &effects) {
+    auto enabled = [&](const char *key) {
+        auto e = effects.value(QLatin1String(key)).toObject();
+        return !e.isEmpty() && e.value("enabled").toBool(true);
+    };
+    // A blur of `blur` reaches 3 standard deviations of blur / 2 (see soften); a shift adds its
+    // distance and the pixel it is resampled from.
+    auto blurred = [](double blur) { return blur > 0 ? int(std::ceil(1.5 * blur)) : 0; };
+    auto shift = [&](const QJsonObject &e, double distance, double blur) {
+        return int(std::ceil(number(e, "distance", distance))) + 1 +
+               blurred(number(e, "blur", blur));
+    };
+    int reach = 0;
+    if (enabled("shadow"))
+        reach = std::max(reach, shift(effects.value("shadow").toObject(), 20, 20));
+    if (enabled("innerShadow"))
+        reach = std::max(reach, shift(effects.value("innerShadow").toObject(), 10, 10));
+    if (enabled("outerGlow"))
+        reach = std::max(reach, blurred(number(effects.value("outerGlow").toObject(), "size", 20)));
+    if (enabled("innerGlow"))
+        reach = std::max(reach, blurred(number(effects.value("innerGlow").toObject(), "size", 10)));
+    if (enabled("stroke"))
+        reach = std::max(
+            reach,
+            std::max(1, int(std::lround(number(effects.value("stroke").toObject(), "size", 4)))));
+    return reach + 2;
+}
+// The effects of `pixels`, the layer's pixels already placed in their padded surface.
+static QImage composeEffects(const QImage &pixels, const QJsonObject &effects) {
+    auto enabled = [&](const char *key) {
+        auto e = effects.value(QLatin1String(key)).toObject();
+        return !e.isEmpty() && e.value("enabled").toBool(true);
+    };
+    auto stroke = effects.value("stroke").toObject(), shadow = effects.value("shadow").toObject(),
+         outer = effects.value("outerGlow").toObject();
+    QImage result(pixels.size(), QImage::Format_RGBA8888_Premultiplied);
+    require(!result.isNull(), "Not enough memory for effects");
     result.fill(Qt::transparent);
-    {
-        QPainter p(&pixels);
-        p.drawImage(inset, inset, shown);
-    }
     auto shape = alpha(pixels);
     if (enabled("shadow"))
         fill(result, shifted(shape, shadow), shadow, .5);
@@ -197,6 +223,50 @@ EffectImage renderEffects(const QImage &shown, const QJsonObject &effects) {
     }
     if (enabled("stroke") && stroke.value("inside").toBool() && number(stroke, "size", 4) > 0)
         drawStroke();
-    return {result, inset};
+    return result;
+}
+EffectImage renderEffects(const QImage &shown, const QJsonObject &effects) {
+    validateEffects(effects);
+    int inset = effectsInset(effects);
+    QSize size = shown.size() + QSize(inset * 2, inset * 2);
+    require(size.width() <= MaxSide && size.height() <= MaxSide &&
+                qint64(size.width()) * size.height() <= MaxSurfacePixels,
+            "Layer effects exceed surface limit");
+    QImage pixels(size, QImage::Format_RGBA8888_Premultiplied);
+    require(!pixels.isNull(), "Not enough memory for effects");
+    pixels.fill(Qt::transparent);
+    {
+        QPainter p(&pixels);
+        p.drawImage(inset, inset, shown);
+    }
+    return {composeEffects(pixels, effects), inset};
+}
+QRect updateEffects(EffectImage &built, const QJsonObject &effects, const QRect &changed,
+                    const std::function<QImage(const QRect &)> &shownArea) {
+    validateEffects(effects);
+    const int reach = effectsReach(effects);
+    const auto bounds = built.image.rect();
+    // The effect pixels the change reaches, and the layer pixels those depend on: every step
+    // reaches at most `reach`, so recomputing `input` gets `output` exactly as the whole would.
+    const auto output = changed.translated(built.inset, built.inset)
+                            .adjusted(-reach, -reach, reach, reach)
+                            .intersected(bounds);
+    if (output.isEmpty())
+        return {};
+    const auto input = output.adjusted(-reach, -reach, reach, reach).intersected(bounds);
+    QImage pixels(input.size(), QImage::Format_RGBA8888_Premultiplied);
+    require(!pixels.isNull(), "Not enough memory for effects");
+    pixels.fill(Qt::transparent);
+    {
+        const auto layerArea = input.translated(-built.inset, -built.inset);
+        QPainter p(&pixels);
+        p.drawImage(layerArea.topLeft() - input.topLeft() + QPoint(built.inset, built.inset),
+                    shownArea(layerArea));
+    }
+    const auto part = composeEffects(pixels, effects);
+    for (int y = output.top(); y <= output.bottom(); ++y)
+        std::copy_n(part.constScanLine(y - input.top()) + 4 * (output.left() - input.left()),
+                    4 * output.width(), built.image.scanLine(y) + 4 * output.left());
+    return output;
 }
 } // namespace compositor

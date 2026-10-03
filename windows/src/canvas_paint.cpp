@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "canvas.h"
 #include "editable_layers.h"
+#include "effects.h"
 #include "filters.h"
 #include "render.h"
 #include <QAbstractTextDocumentLayout>
@@ -18,6 +19,7 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 extern "C" {
 #include "HealPixels.h"
@@ -38,8 +40,20 @@ void Canvas::beginPaint(QMouseEvent *) {
         require(cloneReady_, "Alt-click the canvas to set a clone source");
     require(!paintMask() || !layer->mask.isNull(), "Add a mask before painting it");
     emit editStarted();
+    beginLayerEdit(layer->id());
+    strokeArea_ = {};
+    strokePixels_ = {};
     dragging_ = true;
     original_ = paintMask() ? layer->mask : layer->image;
+    carriedKey_ = original_.cacheKey();
+    strokeReach_ = 0;
+    if (auto effects = layer->metadata.value("effects").toObject();
+        !effects.isEmpty() && !layer->image.isNull()) {
+        const auto placement = layer->placement(layer->image.size());
+        strokeReach_ =
+            effectsReach(effects) * std::max(std::hypot(placement.m11(), placement.m12()),
+                                             std::hypot(placement.m21(), placement.m22()));
+    }
     if (session_->tool == Tool::Smudge || session_->tool == Tool::Liquify) {
         warp_ = std::make_unique<WarpBrush>(
             original_, layer->placement(original_.size()), document_->size(),
@@ -71,7 +85,7 @@ void Canvas::beginPaint(QMouseEvent *) {
     cloneOffset_ = cloneSource_ - start_;
     if (session_->tool != Tool::Gradient)
         dab(start_);
-    refresh();
+    refreshStroke();
 }
 void Canvas::continuePaint(QMouseEvent *e) {
     auto point = toDocument(e->position());
@@ -84,7 +98,7 @@ void Canvas::continuePaint(QMouseEvent *e) {
             layer->metadata.remove("text");
             layer->metadata.remove("shape");
             emit edited();
-            refresh();
+            refreshArea(layerExtent(*layer));
         }
     } else if (session_->tool == Tool::Brush || session_->tool == Tool::Erase ||
                session_->tool == Tool::Clone || session_->tool == Tool::Heal ||
@@ -95,7 +109,7 @@ void Canvas::continuePaint(QMouseEvent *e) {
         steps = std::min(steps, 1000);
         for (int i = 1; i <= steps; ++i)
             dab(last_ + delta * (double(i) / steps));
-        refresh();
+        refreshStroke();
     } else
         update();
 

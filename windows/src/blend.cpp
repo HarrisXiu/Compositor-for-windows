@@ -138,7 +138,7 @@ static double channel(double b, double s, BlendMode m) {
         return s;
     }
 }
-void composite(QImage &back, const QImage &front, BlendMode mode, double opacity) {
+void composite(QImage &back, const QImage &front, BlendMode mode, double opacity, bool parallel) {
     require(back.size() == front.size() && back.format() == QImage::Format_RGBA8888_Premultiplied &&
                 front.format() == QImage::Format_RGBA8888_Premultiplied,
             "Blend surfaces must have matching RGBA dimensions");
@@ -195,7 +195,7 @@ void composite(QImage &back, const QImage &front, BlendMode mode, double opacity
             b[3] = uchar(std::clamp(std::lround(alpha * 255), 0L, 255L));
         }
     };
-    if (qint64(width) * back.height() >= 256 * 256) {
+    if (parallel && qint64(width) * back.height() >= 256 * 256) {
         QVector<int> rows(back.height());
         std::iota(rows.begin(), rows.end(), 0);
         QtConcurrent::blockingMap(rows, row);

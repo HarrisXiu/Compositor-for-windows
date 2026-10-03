@@ -1,5 +1,6 @@
 #include "editable_layers.h"
 #include "editor.h"
+#include "image_operations.h"
 #include "image_scope.h"
 #include "language.h"
 #include "raw_dialog.h"
@@ -15,6 +16,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenuBar>
+#include <QPainter>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSettings>
@@ -26,6 +28,7 @@
 #include <QVBoxLayout>
 #include <QtTest>
 #include <cmath>
+#include <cstring>
 #include <numeric>
 using namespace compositor;
 class UiTests : public QObject {
@@ -883,6 +886,261 @@ class UiTests : public QObject {
         QCOMPARE(errors.count(), 1);
         QCOMPARE(page.document.manifest(), before);
         QCOMPARE(page.history.count(), 0);
+    }
+    // One-pixel vertical stripes: anything but full resolution blurs them together.
+    static QImage stripes(QSize size, QColor even, QColor odd) {
+        QImage image(size, QImage::Format_RGBA8888_Premultiplied),
+            row(size.width(), 1, image.format());
+        for (int x = 0; x < size.width(); ++x)
+            row.setPixelColor(x, 0, x % 2 ? odd : even);
+        for (int y = 0; y < size.height(); ++y)
+            std::memcpy(image.scanLine(y), row.constScanLine(0), size_t(row.bytesPerLine()));
+        return image;
+    }
+    // Where document pixel `x`, `y` is on a canvas at its current zoom, with no pan.
+    static QPoint onCanvas(const Canvas *c, QSize document, int x, int y) {
+        return {
+            int(std::floor((c->width() - document.width() * c->zoom) / 2 + (x + .5) * c->zoom)),
+            int(std::floor((c->height() - document.height() * c->zoom) / 2 + (y + .5) * c->zoom))};
+    }
+    // The canvas once its background rendering has caught up.
+    static QImage rendered(Canvas *c) {
+        auto shot = c->grab().toImage();
+        for (int i = 0; i < 20 && c->rendering(); ++i) {
+            c->waitForRendering();
+            shot = c->grab().toImage();
+        }
+        return shot;
+    }
+    void backgroundRenderingDiscardsOutdatedTiles() {
+        const QSize size(3000, 2000);
+        auto d = Document::create(size);
+        d.addImage("Stripes", stripes(size, Qt::black, Qt::white));
+        EditorPage page(d);
+        page.resize(400, 300);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        rendered(c);
+        c->zoom = 1;
+        c->grab();
+        QVERIFY(c->rendering());
+        // Changed before those tiles are taken in, so they show the old pixels.
+        page.document.active()->image.fill(Qt::red);
+        c->refresh();
+        QCOMPARE(rendered(c).pixelColor(onCanvas(c, size, 1500, 1000)), QColor(Qt::red));
+    }
+    void canvasShowsLargeDocumentsAtFullResolution() {
+        const QSize size(4000, 3000);
+        auto d = Document::create(size);
+        d.addImage("Stripes", stripes(size, Qt::black, Qt::white));
+        EditorPage page(d);
+        page.resize(400, 300);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        auto shot = rendered(c);
+        for (int x : {1999, 2000, 2001})
+            QCOMPARE(shot.pixelColor(onCanvas(c, size, x, 1500)),
+                     QColor(x % 2 ? Qt::white : Qt::black));
+    }
+    void canvasRedrawsWhatABrushTouches() {
+        auto d = Document::create({64, 64});
+        d.addBlank("Paint");
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->session().tool = Tool::Brush;
+        c->session().brushSize = 10;
+        c->session().hardness = 1;
+        c->session().foreground = Qt::red;
+        const auto point = onCanvas(c, {64, 64}, 32, 32), outside = onCanvas(c, {64, 64}, 5, 5);
+        const auto before = rendered(c);
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, point);
+        QTest::mouseMove(c, point + QPoint(6, 0));
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, point + QPoint(6, 0));
+        auto painted = rendered(c);
+        QCOMPARE(painted.pixelColor(point), QColor(Qt::red));
+        QCOMPARE(painted.pixelColor(point + QPoint(6, 0)), QColor(Qt::red));
+        QCOMPARE(painted.pixelColor(outside), before.pixelColor(outside));
+        page.history.undo();
+        QCOMPARE(rendered(c).pixelColor(point), before.pixelColor(point));
+        page.history.redo();
+        QCOMPARE(rendered(c).pixelColor(point), QColor(Qt::red));
+    }
+    void canvasRedrawsAMovedLayer() {
+        auto d = Document::create({64, 64});
+        QImage square(10, 10, QImage::Format_RGBA8888_Premultiplied);
+        square.fill(Qt::red);
+        d.addImage("Square", square);
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = 1;
+        c->session().tool = Tool::Move;
+        const auto from = onCanvas(c, {64, 64}, 5, 5), to = onCanvas(c, {64, 64}, 35, 35);
+        const auto empty = rendered(c).pixelColor(to);
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, from);
+        QTest::mouseMove(c, from + QPoint(15, 15));
+        QTest::mouseMove(c, to);
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, to);
+        auto moved = rendered(c);
+        QCOMPARE(moved.pixelColor(to), QColor(Qt::red));
+        QCOMPARE(moved.pixelColor(from), empty);
+        page.history.undo();
+        auto undone = rendered(c);
+        QCOMPARE(undone.pixelColor(from), QColor(Qt::red));
+        QCOMPARE(undone.pixelColor(to), empty);
+    }
+    void strokeMatchesFreshRender_data() {
+        QTest::addColumn<bool>("mask");
+        QTest::addColumn<double>("zoom");
+        QTest::addColumn<bool>("effects");
+        QTest::newRow("pixels at 25%") << false << .25 << false;
+        QTest::newRow("mask at 25%") << true << .25 << false;
+        QTest::newRow("pixels with effects") << false << 1.0 << true;
+        QTest::newRow("mask with effects") << true << 1.0 << true;
+        QTest::newRow("pixels with effects at 25%") << false << .25 << true;
+    }
+    // A stroke updates the halved images, mask and effects it draws from, and redraws every tile
+    // they reach (a shadow falls past the brush), so the result matches a fresh drawing.
+    void strokeMatchesFreshRender() {
+        QFETCH(bool, mask);
+        QFETCH(double, zoom);
+        QFETCH(bool, effects);
+        auto d = Document::create({1200, 1200});
+        d.addImage("Stripes", stripes({1200, 1200}, Qt::darkCyan, Qt::yellow));
+        d.active()->mask = QImage(1200, 1200, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        if (effects) {
+            QImage disc(1200, 1200, QImage::Format_RGBA8888_Premultiplied);
+            disc.fill(Qt::transparent);
+            QPainter p(&disc);
+            p.setBrush(Qt::darkCyan);
+            p.drawEllipse(QPoint(600, 600), 150, 150);
+            p.end();
+            d.active()->image = disc;
+            d.active()->metadata["effects"] =
+                QJsonObject{{"shadow", QJsonObject{{"distance", 60}, {"angle", 0}, {"blur", 6}}},
+                            {"outerGlow", QJsonObject{{"size", 8}}}};
+        }
+        EditorPage page(d);
+        page.resize(400, 400);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = zoom;
+        c->session().tool = mask ? Tool::Erase : Tool::Brush;
+        c->session().target = mask ? EditTarget::Mask : EditTarget::Pixels;
+        c->session().brushSize = 60;
+        c->session().hardness = 1;
+        c->session().foreground = Qt::red;
+        rendered(c);
+        // Within the tile that starts at 512; the shadow, 60 pixels to the left, falls in the one
+        // before.
+        const auto from = onCanvas(c, {1200, 1200}, 545, 600);
+        QTest::mousePress(c, Qt::LeftButton, Qt::NoModifier, from);
+        for (int step = 1; step <= 4; ++step) {
+            QTest::mouseMove(c, from + QPoint(step * 8, 0));
+            c->grab();
+        }
+        QTest::mouseRelease(c, Qt::LeftButton, Qt::NoModifier, from + QPoint(32, 0));
+        const auto painted = rendered(c);
+        auto copy = page.document;
+        copy.active()->image = copy.active()->image.copy();
+        copy.active()->mask = copy.active()->mask.copy();
+        EditorPage fresh(copy);
+        fresh.resize(400, 400);
+        fresh.show();
+        QTest::qWait(30);
+        fresh.canvas->zoom = zoom;
+        QCOMPARE(rendered(fresh.canvas), painted);
+    }
+    void eyedropperReadsFullResolution() {
+        const QSize size(4000, 3000);
+        auto d = Document::create(size);
+        d.addImage("Stripes", stripes(size, Qt::red, Qt::blue));
+        EditorPage page(d);
+        page.resize(400, 300);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = .05;
+        c->session().tool = Tool::Eyedropper;
+        QSignalSpy picked(c, &Canvas::colorPicked);
+        QTest::mouseClick(c, Qt::LeftButton, Qt::NoModifier, onCanvas(c, size, 2001, 1500));
+        QCOMPARE(picked.count(), 1);
+        const auto color = picked.first().first().value<QColor>();
+        QVERIFY(color == QColor(Qt::red) || color == QColor(Qt::blue));
+    }
+    // Whole-canvas edits (flip, crop, canvas size) change what every tile shows, not one layer's.
+    void canvasFollowsCanvasOperations() {
+        const QSize size(600, 400);
+        auto d = Document::create(size);
+        QImage halves(size, QImage::Format_RGBA8888_Premultiplied);
+        halves.fill(Qt::blue);
+        QPainter(&halves).fillRect(0, 0, size.width() / 2, size.height(), Qt::red);
+        d.addImage("Halves", halves);
+        EditorPage page(d);
+        page.resize(400, 300);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        c->zoom = .5;
+        auto at = [&](int x, int y) {
+            return rendered(c).pixelColor(onCanvas(c, page.document.size(), x, y));
+        };
+        QCOMPARE(at(100, 200), QColor(Qt::red));
+        QCOMPARE(at(500, 200), QColor(Qt::blue));
+        page.edit("Flip", [](Document &document) { flipCanvas(document, true); });
+        QCOMPARE(at(100, 200), QColor(Qt::blue));
+        QCOMPARE(at(500, 200), QColor(Qt::red));
+        page.edit("Crop", [](Document &document) { cropCanvas(document, QRect(300, 0, 300, 400)); });
+        QCOMPARE(page.document.size(), QSize(300, 400));
+        QCOMPARE(at(10, 200), QColor(Qt::red));
+        QCOMPARE(at(290, 200), QColor(Qt::red));
+        page.edit("Canvas size", [](Document &document) {
+            resizeCanvas(document, {600, 400}, 4, QColor(Qt::green));
+        });
+        QCOMPARE(page.document.size(), QSize(600, 400));
+        // Cropping keeps the layer's pixels outside the canvas, so its flipped blue half shows
+        // again on the left; only beyond the layer is there extension fill.
+        QCOMPARE(at(10, 200), QColor(Qt::blue));
+        QCOMPARE(at(300, 200), QColor(Qt::red));
+        QCOMPARE(at(590, 200), QColor(Qt::green));
+        page.history.undo();
+        QCOMPARE(page.document.size(), QSize(300, 400));
+        QCOMPARE(at(150, 200), QColor(Qt::red));
+    }
+    void pixelGridAppearsAt800Percent() {
+        auto d = Document::create({16, 16});
+        QImage white(16, 16, QImage::Format_RGBA8888_Premultiplied);
+        white.fill(Qt::white);
+        d.addImage("White", white);
+        EditorPage page(d);
+        page.resize(320, 320);
+        page.show();
+        QTest::qWait(30);
+        auto c = page.canvas;
+        auto darkest = [&](double zoom) {
+            c->zoom = zoom;
+            auto shot = rendered(c);
+            // Pixels 7 and 8 meet at the middle of the canvas.
+            const int edge = int(std::lround((c->width() - 16 * zoom) / 2 + 8 * zoom));
+            int value = 255;
+            for (int x = edge - 1; x <= edge; ++x)
+                value = std::min(value, shot.pixelColor(x, c->height() / 2 + 3).red());
+            return value;
+        };
+        QVERIFY(darkest(10) < 255);
+        QCOMPARE(darkest(4), 255);
     }
 };
 QTEST_MAIN(UiTests)

@@ -31,6 +31,8 @@ enum class BlendMode {
     Luminosity
 };
 BlendMode parseBlendMode(const QString &name);
-// Both surfaces must have the same size and RGBA8888 premultiplied format.
-void composite(QImage &back, const QImage &front, BlendMode mode, double opacity);
+// Both surfaces must have the same size and RGBA8888 premultiplied format. `parallel` lets
+// large surfaces split rows across threads; callers already running concurrently turn it off.
+void composite(QImage &back, const QImage &front, BlendMode mode, double opacity,
+               bool parallel = true);
 } // namespace compositor

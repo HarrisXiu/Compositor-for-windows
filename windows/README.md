@@ -2,7 +2,7 @@
 
 **当前 Windows 版尚未完全完成，后续将持续更新。** This is Windows migration preview 0.4, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
 
-移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架与 L1–L4 主要范围已完成；R2–R4 已在独立工作目录实现并通过本地测试，尚待合入和集成验收；高级交互、AI 和完整验收仍待完善。概括计划与进度见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)。版本保持 0.4.0，自动更新继续排除。
+移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架与 L1–L4 主要范围已完成；R2–R4 已与 L1–L4 合并并通过合并后的本地回归，大文档与跨平台验收仍待完成；高级交互、AI 和完整验收仍待完善。概括计划与进度见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)。版本保持 0.4.0，自动更新继续排除。
 
 ## Run
 
@@ -51,13 +51,13 @@ When publishing a release, attach everything in `artifacts/qt-source/` beside th
 
 ## Differences and work remaining
 
-**This preview does not yet satisfy full feature parity with the Mac app.** It uses a CPU renderer; Direct3D acceleration, tiled rendering, Camera Raw targeted slider gestures and RGB hover readouts, full canvas filter previews and color-band editors, mesh distort, advanced text/shape interactions, selection transforms, snapping/rulers/grid editing, complete vector conversion, HEIC, AI subject/object selection and background removal, installer/shell integration remain to be migrated. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
+**This preview does not yet satisfy full feature parity with the Mac app.** It uses a tiled CPU renderer; Direct3D acceleration, Camera Raw targeted slider gestures and RGB hover readouts, full canvas filter previews and color-band editors, mesh distort, advanced text/shape interactions, selection transforms, snapping/rulers/grid editing, complete vector conversion, HEIC, AI subject/object selection and background removal, installer/shell integration remain to be migrated. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
 
 Unknown future layer effects are retained but omitted from the preview; a visible warning lists them and flattening/export/copy merged is blocked while present. Supported effects and adjustments now render. Hue/Saturation uses the original 33³ color-cube algorithm and C interpolation; Curves uses the original PCHIP algorithm and C lookup. Gaussian/Motion Blur, standalone Bloom and font rasterization use Windows implementations; Mac reference comparisons are still required to establish visual parity. Preview noise/grain coordinates and spatial filter extents still need matching against the original. PSD compression/depth support matches the upstream reader, but real Photoshop interoperability needs broader fixtures beyond the independent test files.
 
 Saving stages a complete sibling package, renames the existing project to a backup, installs the staged folder, then removes the backup. If replacement fails, it attempts to restore the original; if restoration also fails, the error identifies the preserved backup. These two Windows directory renames are **not a single atomic operation**; a power failure between them can leave `.compositor-stage-*` and `.compositor-backup-*` folders beside the project. Keep these folders for recovery. Third-party package files (e.g. Quick Look previews) are not regenerated in this preview.
 
-History currently retains up to 40 copy-on-write document snapshots; a dedicated history memory budget is still needed for very large projects. Full-resolution filtering/export can block the UI; saving uses an immutable worker snapshot. Long-side previews are bounded to 1,600 pixels. No macOS build was run on this Windows machine.
+History currently retains up to 40 copy-on-write document snapshots; a dedicated history memory budget is still needed for very large projects. Full-resolution filtering/export can block the UI; saving uses an immutable worker snapshot. The canvas renders only the tiles on screen, at full resolution when zoomed in; see [ARCHITECTURE.md](ARCHITECTURE.md). No macOS build was run on this Windows machine.
 
 ## Shortcuts
 

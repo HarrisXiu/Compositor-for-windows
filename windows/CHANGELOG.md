@@ -1,5 +1,15 @@
 # Windows preview changes
 
+## Unreleased
+
+- Replaced the 1,600-pixel whole-document canvas preview with 256-pixel tiles rendered for what is on screen, at full resolution when zoomed in and at power-of-two reductions when zoomed out; tiles render in parallel and are cached.
+- Refreshes redraw only the tiles over layers that changed; recording a finished edit redraws nothing. Brush dabs redraw only the area they touch, compositing the edited layer and those above over a kept backdrop.
+- Zoomed-out views halve layer images before resampling them, so they stay sharp; exports are unchanged. Painting updates only the changed part of the halved images and of a mask's coverage image.
+- Canvas tiles render in the background from a copy of the document, so opening or zooming a large document doesn't block the window; until a tile is ready, other zoom levels stand in for it. Edits in progress still redraw at once.
+- Painting a layer with effects redraws them only within their reach of the brush, exactly as a full rebuild would, and redraws every tile that reach touches. The effects cache now holds a large layer's effects (up to 512 MiB).
+- The eyedropper samples the full-size composite; the magic wand reuses one until the document changes. A pixel grid appears at 800% and above.
+- Add Noise and Grain adjustments take the position of the area being rendered, so parts of an image match the whole.
+
 ## 0.4
 
 - Install Qt packages sequentially with the Windows runner's external 7-Zip to avoid shared-directory extraction races and intermittent py7zr Bad7zFile failures; stop immediately if the installer dependency setup fails.

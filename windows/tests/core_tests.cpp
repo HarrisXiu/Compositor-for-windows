@@ -10,9 +10,12 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPainter>
 #include <QRandomGenerator>
 #include <QTemporaryDir>
+#include <QtConcurrent/QtConcurrentMap>
 #include <QtTest>
+#include <numeric>
 using namespace compositor;
 
 class CoreTests : public QObject {
@@ -578,6 +581,401 @@ class CoreTests : public QObject {
         auto out = limitToSelection(source, modified, mask);
         QCOMPARE(out.pixelColor(0, 0), QColor(Qt::white));
         QCOMPARE(out.pixelColor(1, 0), QColor(Qt::black));
+    }
+    // Layers that exercise everything an area render can get wrong: transformed, shrunk and
+    // nearest-sampled layers, a mask placed on its own, clipping with an adjustment inside,
+    // a masked folder, effects, and adjustments that read their neighbors or their position.
+    static Document areaDocument(QStringList *ids = nullptr) {
+        auto d = Document::create({97, 61});
+        QRandomGenerator random(1301);
+        auto pixels = [&](QSize size, int alphaFloor) {
+            QImage image(size, QImage::Format_RGBA8888_Premultiplied);
+            for (int y = 0; y < size.height(); ++y)
+                for (int x = 0; x < size.width(); ++x)
+                    image.setPixelColor(x, y,
+                                        QColor(int(random.bounded(256)), int(random.bounded(256)),
+                                               int(random.bounded(256)),
+                                               alphaFloor + int(random.bounded(256 - alphaFloor))));
+            return image;
+        };
+        auto gradient = [](QSize size) {
+            QImage mask(size, QImage::Format_Grayscale8);
+            for (int y = 0; y < size.height(); ++y)
+                for (int x = 0; x < size.width(); ++x)
+                    mask.scanLine(y)[x] = uchar((x * 255 / size.width() + y * 7) % 256);
+            return mask;
+        };
+        auto adjustment = [&](const QJsonObject &a, const QString &clipTo = {}) {
+            Layer l;
+            l.metadata = {{"id", newId()},
+                          {"name", a.value("kind")},
+                          {"isVisible", true},
+                          {"transform", makeTransform({0, 0, 97, 61})},
+                          {"adjustment", a}};
+            if (!clipTo.isEmpty())
+                l.metadata["maskSourceID"] = clipTo;
+            d.layers.push_back(l);
+            return l.id();
+        };
+        auto base = d.addImage("Base", pixels({97, 61}, 255));
+        auto rotated = d.addImage("Rotated", pixels({40, 30}, 0));
+        auto t = d.active()->transform();
+        t["origin"] = QJsonArray{20.5, 9};
+        t["size"] = QJsonArray{51, 37};
+        t["rotation"] = 23;
+        d.active()->metadata["transform"] = t;
+        d.active()->metadata["blendMode"] = "Overlay";
+        d.active()->mask = gradient({20, 20});
+        d.active()->metadata["maskFile"] = rotated + ".mask.png";
+        d.active()->metadata["maskLinked"] = false;
+        d.active()->metadata["maskPlacement"] = makeTransform({10, 5, 60, 40});
+        auto clipped = d.addImage("Clipped", pixels({30, 30}, 128));
+        d.active()->setBounds({30, 10, 30, 30});
+        d.active()->metadata["maskSourceID"] = rotated;
+        d.active()->metadata["blendMode"] = "Multiply";
+        adjustment(makeAdjustment("Hue/Saturation", {{"hue", 40}, {"saturation", 20}}), rotated);
+        auto folder = d.addGroup("Folder");
+        d.active()->metadata["opacity"] = .8;
+        d.active()->mask = gradient({97, 61});
+        d.active()->metadata["maskFile"] = folder + ".mask.png";
+        auto inside = d.addImage("Inside", pixels({25, 25}, 200));
+        d.active()->metadata["parentID"] = folder;
+        d.active()->setBounds({60, 30, 25, 25});
+        t = d.active()->transform();
+        t["sampling"] = "Nearest";
+        d.active()->metadata["transform"] = t;
+        d.active()->metadata["effects"] =
+            QJsonObject{{"shadow", QJsonObject{{"distance", 4}, {"blur", 2}}},
+                        {"stroke", QJsonObject{{"size", 2}, {"red", 1}}}};
+        auto shrunk = d.addImage("Shrunk", pixels({300, 200}, 255));
+        d.active()->setBounds({5, 35, 33, 22});
+        auto blur = adjustment({{"kind", "Gaussian Blur"}, {"blurRadius", 2.5}});
+        adjustment({{"kind", "Motion Blur"}, {"motionAngle", 30}, {"motionDistance", 7}});
+        adjustment({{"kind", "Add Noise"}, {"noiseAmount", 25}, {"noiseSeed", 5}});
+        adjustment({{"kind", "Grain"},
+                    {"grainSettings", QJsonObject{{"amount", 40}, {"size", 2}, {"seed", 9}}}});
+        if (ids)
+            *ids = {base, rotated, clipped, folder, inside, shrunk, blur};
+        return d;
+    }
+    void areasMatchFullRender_data() {
+        QTest::addColumn<QSize>("size");
+        QTest::newRow("document size") << QSize(97, 61);
+        QTest::newRow("reduced") << QSize(40, 25);
+        QTest::newRow("enlarged") << QSize(150, 95);
+    }
+    // Qt resamples a transformed image stepping from the first pixel it draws, so where an area
+    // starts can round a resampled pixel one level differently; nothing else may differ.
+    void areasMatchFullRender() {
+        QFETCH(QSize, size);
+        auto d = areaDocument();
+        auto full = renderDocument(d, size);
+        int worst = 0, differing = 0;
+        for (int y = 0; y < size.height(); y += 17)
+            for (int x = 0; x < size.width(); x += 23) {
+                auto pixels = QRect(x, y, 23, 17).intersected(QRect(QPoint(), size));
+                auto area = renderArea(d, {size, pixels, false, false});
+                auto expected = full.copy(pixels);
+                for (int row = 0; row < pixels.height(); ++row)
+                    for (int byte = 0; byte < pixels.width() * 4; ++byte) {
+                        int difference = std::abs(area.constScanLine(row)[byte] -
+                                                  expected.constScanLine(row)[byte]);
+                        worst = std::max(worst, difference);
+                        differing += difference > 0;
+                    }
+            }
+        QVERIFY2(worst <= 1, qPrintable(QString("differs by up to %1").arg(worst)));
+        QVERIFY2(differing * 20 <= size.width() * size.height() * 4,
+                 qPrintable(QString("%1 channels differ").arg(differing)));
+    }
+    void backdropThenOverMatchesArea() {
+        QStringList ids;
+        auto d = areaDocument(&ids);
+        RenderArea area{d.size(), QRect(13, 7, 50, 40)};
+        auto expected = renderArea(d, area);
+        for (const auto &id : ids)
+            QCOMPARE(renderOver(d, area, id, renderBackdrop(d, area, id)), expected);
+    }
+    void backdropOutlivesEditsToItsLayer() {
+        QStringList ids;
+        auto d = areaDocument(&ids);
+        RenderArea area{d.size(), QRect(0, 0, 97, 61)};
+        for (const auto &id : {ids[1], ids[4]}) {
+            auto backdrop = renderBackdrop(d, area, id);
+            auto edited = d;
+            auto l = edited.find(id);
+            l->image.detach();
+            QPainter p(&l->image);
+            p.fillRect(QRect(3, 3, 9, 6), QColor(10, 220, 90));
+            p.end();
+            l->move({4, -3});
+            QCOMPARE(renderOver(edited, area, id, backdrop), renderArea(edited, area));
+        }
+    }
+    void halvingsKeepReductionsSharp() {
+        auto d = Document::create({512, 512});
+        QImage checker(512, 512, QImage::Format_RGBA8888_Premultiplied);
+        for (int y = 0; y < 512; ++y)
+            for (int x = 0; x < 512; ++x)
+                checker.setPixelColor(x, y, (x + y) % 2 ? Qt::white : Qt::black);
+        d.addImage("Checker", checker);
+        const QSize size(80, 80);
+        auto sharp = renderArea(d, {size, QRect(QPoint(), size), true});
+        auto plain = renderArea(d, {size, QRect(QPoint(), size)});
+        QCOMPARE(plain, renderDocument(d, size));
+        int sharpError = 0, plainError = 0;
+        for (int y = 0; y < size.height(); ++y)
+            for (int x = 0; x < size.width(); ++x) {
+                sharpError = std::max(sharpError, std::abs(sharp.pixelColor(x, y).red() - 128));
+                plainError = std::max(plainError, std::abs(plain.pixelColor(x, y).red() - 128));
+            }
+        QVERIFY2(sharpError <= 2, qPrintable(QString::number(sharpError)));
+        QVERIFY2(plainError > 40, qPrintable(QString::number(plainError)));
+    }
+    // Every effect at once, then the inside stroke, which erodes and so treats edges differently.
+    static QJsonObject allEffects() {
+        return {{"shadow", QJsonObject{{"distance", 9}, {"angle", 35}, {"blur", 4}}},
+                {"outerGlow", QJsonObject{{"size", 3}}},
+                {"innerGlow", QJsonObject{{"size", 4}}},
+                {"innerShadow", QJsonObject{{"distance", 5}, {"blur", 3}}},
+                {"colorOverlay", QJsonObject{{"green", 1}, {"opacity", .3}}},
+                {"stroke", QJsonObject{{"size", 3}, {"red", 1}}}};
+    }
+    static QJsonObject insideStroke() {
+        return {{"stroke", QJsonObject{{"size", 4}, {"inside", true}, {"blue", 1}}},
+                {"shadow", QJsonObject{{"distance", 6}, {"blur", 2}}}};
+    }
+    // Opaque blobs on transparency, so the effects have edges to work on.
+    static QImage blobs(QSize size, quint32 seed) {
+        QRandomGenerator random(seed);
+        QImage image(size, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter p(&image);
+        p.setRenderHint(QPainter::Antialiasing);
+        for (int i = 0; i < 12; ++i) {
+            p.setBrush(QColor(int(random.bounded(256)), int(random.bounded(256)),
+                              int(random.bounded(256)), 128 + int(random.bounded(128))));
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPointF(random.bounded(size.width()), random.bounded(size.height())),
+                          8 + random.bounded(30), 8 + random.bounded(30));
+        }
+        return image;
+    }
+    void effectsUpdateMatchesRebuild_data() {
+        QTest::addColumn<QJsonObject>("effects");
+        QTest::addColumn<QRect>("changed");
+        QTest::newRow("all, inside") << allEffects() << QRect(40, 30, 25, 20);
+        QTest::newRow("all, at the edge") << allEffects() << QRect(0, 70, 30, 20);
+        QTest::newRow("inside stroke") << insideStroke() << QRect(55, 10, 40, 30);
+    }
+    void effectsUpdateMatchesRebuild() {
+        QFETCH(QJsonObject, effects);
+        QFETCH(QRect, changed);
+        auto image = blobs({120, 90}, 5);
+        auto built = renderEffects(image, effects);
+        auto edited = image.copy();
+        QPainter p(&edited);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.fillRect(changed, Qt::transparent);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        p.setBrush(QColor(250, 40, 90));
+        p.drawEllipse(changed);
+        p.end();
+        updateEffects(built, effects, changed, [&](const QRect &r) { return edited.copy(r); });
+        auto rebuilt = renderEffects(edited, effects);
+        QCOMPARE(built.inset, rebuilt.inset);
+        QCOMPARE(built.image, rebuilt.image);
+    }
+    void carriedCachesMatchRebuilt_data() {
+        QTest::addColumn<QJsonObject>("effects");
+        QTest::addColumn<QSize>("maskSize");
+        QTest::newRow("plain, rescaled mask") << QJsonObject() << QSize(399, 301);
+        QTest::newRow("effects") << allEffects() << QSize(400, 300);
+        QTest::newRow("inside stroke") << insideStroke() << QSize(400, 300);
+    }
+    void carriedCachesMatchRebuilt() {
+        QFETCH(QJsonObject, effects);
+        QFETCH(QSize, maskSize);
+        auto d = Document::create({400, 300});
+        d.addImage("Pixels", blobs({400, 300}, 29));
+        auto l = d.active();
+        l->mask = QImage(maskSize, QImage::Format_Grayscale8);
+        for (int y = 0; y < l->mask.height(); ++y)
+            for (int x = 0; x < l->mask.width(); ++x)
+                l->mask.scanLine(y)[x] = uchar(255 - x * 128 / l->mask.width());
+        l->metadata["maskFile"] = l->id() + ".mask.png";
+        if (!effects.isEmpty())
+            l->metadata["effects"] = effects;
+        // At full size and at a quarter, where the pixels, mask and effects are drawn from
+        // twice-halved copies.
+        const RenderArea full{{400, 300}, QRect(0, 0, 400, 300)},
+            quarter{{100, 75}, QRect(0, 0, 100, 75), true};
+        renderArea(d, full);
+        renderArea(d, quarter);
+        const auto imageKey = l->image.cacheKey(), maskKey = l->mask.cacheKey();
+        const QRect changed(37, 21, 51, 33);
+        for (int y = changed.top(); y <= changed.bottom(); ++y) {
+            auto p = l->image.scanLine(y);
+            auto m = l->mask.scanLine(y);
+            for (int x = changed.left(); x <= changed.right(); ++x) {
+                p[x * 4 + 3] = uchar(255 - p[x * 4 + 3]);
+                for (int c = 0; c < 3; ++c)
+                    p[x * 4 + c] = std::min(p[x * 4 + c], p[x * 4 + 3]);
+                m[x] = uchar(x * 3);
+            }
+        }
+        carryRenderCaches(*l, false, imageKey, changed);
+        carryRenderCaches(*l, true, maskKey, changed);
+        const auto carriedFull = renderArea(d, full), carriedQuarter = renderArea(d, quarter);
+        // Copies have new cache keys, so everything is built again from the edited pixels.
+        l->image = l->image.copy();
+        l->mask = l->mask.copy();
+        QCOMPARE(carriedFull, renderArea(d, full));
+        QCOMPARE(carriedQuarter, renderArea(d, quarter));
+    }
+    void layerExtentIncludesEffects() {
+        auto d = Document::create({50, 50});
+        QImage image(20, 20, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::red);
+        d.addImage("Shape", image);
+        d.active()->setBounds({10, 10, 20, 20});
+        QCOMPARE(layerExtent(*d.active()), QRectF(10, 10, 20, 20));
+        d.active()->metadata["effects"] =
+            QJsonObject{{"shadow", QJsonObject{{"distance", 5}, {"blur", 2}}}};
+        QCOMPARE(layerExtent(*d.active()), QRectF(-3, -3, 46, 46));
+        d.addGroup("Folder");
+        QVERIFY(layerExtent(*d.active()).isNull());
+    }
+    void renderReachCoversBlurs() {
+        auto d = Document::create({100, 50});
+        QCOMPARE(renderReach(d, {100, 50}), 0);
+        for (const auto &a : {QJsonObject{{"kind", "Gaussian Blur"}, {"blurRadius", 2}},
+                              QJsonObject{{"kind", "Motion Blur"}, {"motionDistance", 7}}}) {
+            Layer l;
+            l.metadata = {{"id", newId()},
+                          {"isVisible", true},
+                          {"transform", makeTransform({0, 0, 100, 50})},
+                          {"adjustment", a}};
+            d.layers.push_back(l);
+        }
+        QCOMPARE(renderReach(d, {100, 50}), 6 + 6);
+        QCOMPARE(renderReach(d, {50, 25}), 3 + 4);
+    }
+    void tiledRenderingTiming() {
+        if (!qEnvironmentVariableIsSet("COMPOSITOR_BENCHMARK"))
+            QSKIP("Set COMPOSITOR_BENCHMARK=1 to run the optional canvas rendering comparison.");
+        // 6000 x 4000 with a background and 19 more layers, some blended; the size the plan's
+        // acceptance target names.
+        auto d = Document::create({6000, 4000});
+        QImage background(6000, 4000, QImage::Format_RGBA8888_Premultiplied);
+        background.fill(QColor(40, 60, 90));
+        d.addImage("Background", background);
+        QRandomGenerator random(77);
+        const QStringList modes{"Normal", "Multiply", "Screen", "Overlay"};
+        for (int i = 0; i < 19; ++i) {
+            QImage image(1800, 1200, QImage::Format_RGBA8888_Premultiplied);
+            image.fill(QColor(int(random.bounded(256)), int(random.bounded(256)),
+                              int(random.bounded(256)), 160));
+            d.addImage(QString("Layer %1").arg(i), image);
+            d.active()->setBounds(
+                {double(random.bounded(4200)), double(random.bounded(2800)), 1800, 1200});
+            d.active()->metadata["blendMode"] = modes[i % modes.size()];
+        }
+        const auto layerId = d.activeId();
+        QElapsedTimer timer;
+        timer.start();
+        renderDocument(d, {1600, 1067});
+        const auto previewMs = timer.nsecsElapsed() / 1e6;
+        // A 1440 x 900 view at 100%: the 256-pixel tiles it touches, rendered as the canvas does.
+        QVector<RenderArea> view;
+        for (int y = 1536; y < 1536 + 900 + 256; y += 256)
+            for (int x = 2048; x < 2048 + 1440 + 256; x += 256)
+                view.push_back({d.size(), QRect(x, y, 256, 256), true, false});
+        timer.restart();
+        prepareRender(d, d.size(), true);
+        QtConcurrent::blockingMap(view, [&](RenderArea &a) { renderArea(d, a); });
+        const auto viewMs = timer.nsecsElapsed() / 1e6;
+        // A brush dab crossing four tiles, with their backdrops kept from the stroke's start.
+        QVector<RenderArea> dab(view.begin(), view.begin() + 2);
+        dab += QVector<RenderArea>(view.begin() + 7, view.begin() + 9);
+        QVector<QImage> backdrops;
+        for (const auto &a : dab)
+            backdrops << renderBackdrop(d, a, layerId);
+        timer.restart();
+        const int dabs = 20;
+        for (int i = 0; i < dabs; ++i) {
+            QVector<int> tiles(dab.size());
+            std::iota(tiles.begin(), tiles.end(), 0);
+            QtConcurrent::blockingMap(tiles,
+                                      [&](int t) { renderOver(d, dab[t], layerId, backdrops[t]); });
+        }
+        const auto dabMs = timer.nsecsElapsed() / 1e6 / dabs;
+        // Painting at 25%: the edited layer's halvings rebuilt whole, or carried over a dab.
+        auto &edited = d.layers.first().image;
+        auto dabAt = [&](int x) {
+            const auto before = edited.cacheKey();
+            QPainter p(&edited);
+            p.fillRect(QRect(x, 2000, 120, 120), Qt::red);
+            p.end();
+            return before;
+        };
+        prepareRender(d, {1500, 1000}, true);
+        dabAt(1000);
+        timer.restart();
+        prepareRender(d, {1500, 1000}, true);
+        const auto rebuildMs = timer.nsecsElapsed() / 1e6;
+        const auto previous = dabAt(1200);
+        timer.restart();
+        carryRenderCaches(d.layers.first(), false, previous, QRect(1200, 2000, 120, 120));
+        prepareRender(d, {1500, 1000}, true);
+        const auto carryMs = timer.nsecsElapsed() / 1e6;
+        // A 6000 x 4000 layer with a drop shadow and a stroke: its effects rebuilt whole after a
+        // dab, or carried over it.
+        auto shaped = Document::create({6000, 4000});
+        QImage shape(6000, 4000, QImage::Format_RGBA8888_Premultiplied);
+        shape.fill(Qt::transparent);
+        {
+            QPainter p(&shape);
+            p.setBrush(Qt::darkCyan);
+            p.drawEllipse(QRect(500, 500, 5000, 3000));
+        }
+        shaped.addImage("Shape", shape);
+        shaped.active()->metadata["effects"] =
+            QJsonObject{{"shadow", QJsonObject{{"distance", 20}, {"blur", 10}}},
+                        {"stroke", QJsonObject{{"size", 4}}}};
+        auto &shapeImage = shaped.active()->image;
+        const RenderArea tile{shaped.size(), QRect(1024, 1024, 256, 256)};
+        auto shapeDab = [&] {
+            const auto before = shapeImage.cacheKey();
+            QPainter p(&shapeImage);
+            p.fillRect(QRect(1100, 1100, 60, 60), Qt::red);
+            p.end();
+            return before;
+        };
+        renderArea(shaped, tile);
+        shapeDab();
+        timer.restart();
+        renderArea(shaped, tile);
+        const auto effectsRebuildMs = timer.nsecsElapsed() / 1e6;
+        const auto shapeBefore = shapeDab();
+        timer.restart();
+        carryRenderCaches(*shaped.active(), false, shapeBefore, QRect(1100, 1100, 60, 60));
+        renderArea(shaped, tile);
+        const auto effectsCarryMs = timer.nsecsElapsed() / 1e6;
+        qInfo().noquote() << QString("Dab on a 6000x4000 layer with effects: rebuilt %1 ms, "
+                                     "carried %2 ms")
+                                 .arg(effectsRebuildMs, 0, 'f', 1)
+                                 .arg(effectsCarryMs, 0, 'f', 1);
+        qInfo().noquote() << QString("Dab at 25%: halvings rebuilt %1 ms, carried %2 ms")
+                                 .arg(rebuildMs, 0, 'f', 1)
+                                 .arg(carryMs, 0, 'f', 1);
+        qInfo().noquote() << QString("6000x4000, 20 layers: old 1600 px preview %1 ms per refresh; "
+                                     "1440x900 view at 100% %2 ms (%3 tiles); "
+                                     "brush dab over 4 tiles %4 ms")
+                                 .arg(previewMs, 0, 'f', 1)
+                                 .arg(viewMs, 0, 'f', 1)
+                                 .arg(view.size())
+                                 .arg(dabMs, 0, 'f', 1);
     }
     void rejectsMissingImage() {
         auto d = Document::create({1, 1});

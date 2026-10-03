@@ -1,6 +1,6 @@
 # Windows editor architecture
 
-The 0.4 preview separates the application shell, per-project interaction state and tool dispatch. These changes prepare the viewport renderer described in the improvement plan; the full-document 1,600-pixel preview remains in place for this release.
+The 0.4 preview separates the application shell, per-project interaction state and tool dispatch. The canvas draws the document from tiles rendered for what is on screen, at full resolution when zoomed in (see Canvas rendering below).
 
 | Module | Responsibility |
 | --- | --- |
@@ -22,6 +22,7 @@ The 0.4 preview separates the application shell, per-project interaction state a
 | `canvas_tools.cpp` | Concrete tools implementing press/move/release/key/overlay/cancel interface |
 | `canvas_paint.cpp` | Shared painting, warp and stroke-commit kernels |
 | `blend.cpp` | Parsed blend modes, Normal path and independent parallel rows |
+| `render.cpp` | Compositing a document, or any part of it at any size; backdrops for repeated edits to one layer |
 
 ## Session and history
 
@@ -49,4 +50,22 @@ Layer blend names remain canonical strings in the project format. They are parse
 
 Before scheduling work, the destination detaches once and workers receive disjoint raw row pointers. A retained source image preserves correct behavior when the caller passes the same image as source and destination. Workers do not call mutating QImage methods. Equivalence tests use the frozen 0.3 compositor across all 24 modes, partial/zero/full alpha, multiple opacities and both scheduling paths.
 
-Viewport rendering, tile invalidation, painting stack caches, mipmaps and GPU rendering are not part of this change. The optional `COMPOSITOR_BENCHMARK=1 compositor_tests blendTiming` command compares the old and new compositor on this machine; it is not an end-to-end large-document painting benchmark.
+GPU rendering is not part of this change. The optional `COMPOSITOR_BENCHMARK=1 compositor_tests blendTiming` command compares the old and new blend loop on this machine.
+
+## Canvas rendering
+
+`renderArea(document, {full, pixels})` renders part of the document as if all of it were `full` pixels. It equals `renderDocument(document, full).copy(pixels)`, to within one level per channel where Qt resamples a transformed layer (it steps from the first pixel it draws). Blur adjustments read their neighbors, so an area is rendered with a margin of `renderReach` pixels and cropped; Add Noise and Grain are seeded by output position (`originX`/`originY`), so an area gets the same noise as the whole. Layer effects are built once per layer at its own resolution and cached (up to 512 MiB, so a large layer's effects fit).
+
+The canvas keeps 256-pixel tiles of the document at power-of-two reductions: level n is 1/2^n of the document, rounding up. It draws from the smallest level with at least as many pixels as the screen shows (zoom times the device pixel ratio), so drawing only shrinks a level by up to half, or enlarges full size pixel for pixel. Only tiles on screen are rendered, in parallel, after `prepareRender` has built the effect and halving caches they read. Visible tiles are stitched into one image before scaling so no seams appear between them.
+
+Ordinarily tiles render in the background, from a copy of the document (cheap: its images are shared), so opening a large document or zooming never blocks the window. A tile not rendered yet is shown meanwhile from cached tiles of a coarser level scaled up, or of the next finer one scaled down. Dropping tiles changes a generation number and cancels the batch in flight; a batch from an older generation is discarded when it ends, and the next paint asks for what is still missing. While a layer is edited, the tiles the edit changes are rendered on the UI thread instead, so each dab shows at once. `Canvas::waitForRendering` lets tests wait for a batch. At 800% and above a pixel grid is drawn.
+
+Canvas previews pass `halvings`: a layer drawn below half size is first reduced by averaging 2×2 pixels (repeating the edge on odd sizes) as many times as needed, then resampled, so zoomed-out views stay sharp instead of aliasing. Halved images are cached by their source's `cacheKey`. `renderDocument` never halves, so exports and dialog previews are unchanged.
+
+The canvas records each layer's metadata and image/mask cache keys when it draws. `refresh()` compares the document against that record: a changed pixel layer invalidates only the tiles over its old and new extent (`layerExtent`, which includes how far its effects reach, plus the blurs' reach); a change to a folder or adjustment, to the layer order or to the canvas size invalidates everything. A refresh after which nothing changed, such as recording a finished stroke for undo, renders nothing.
+
+While a brush stroke or move edits one layer, each tile keeps a backdrop: everything composited before the step where that layer, the layers inside it or those clipped to them join the stack (`renderBackdrop`). Redrawing a tile then composites only that step and the ones above it over a copy (`renderOver`). Brush dabs report the document area they changed, so `refreshArea` redraws only those tiles. Any other change drops the backdrops. Dabs also report the pixels they changed in the edited image or mask, and `carryRenderCaches` moves that image's halvings, mask coverage image and layer effects over to its new version, rewriting only what the change reaches, instead of letting the next render rebuild them whole. Every effect step reaches a bounded distance (`effectsReach`: a shift plus a blur of 3 standard deviations, a dilation, or nothing), so `updateEffects` recomputes the part of the effect image within that reach of the change from the layer pixels within twice that reach, and gets exactly the pixels a full rebuild would. The tiles a dab redraws are grown by the same reach, since a shadow can fall in a tile the brush never touched.
+
+The eyedropper renders the one full-size pixel under the pointer. The magic wand reads a full-size composite that the canvas keeps until the document changes or another tool is chosen.
+
+On this machine, `COMPOSITOR_BENCHMARK=1 compositor_tests tiledRenderingTiming` measures a 6000×4000 document with 20 layers: the previous 1,600-pixel preview took about 86 ms per refresh; a 1440×900 view at 100% (35 tiles) renders from nothing in about 27 ms, and a brush dab over four tiles with their backdrops in about 3 ms. At 25%, a dab's halvings of a 6000×4000 layer take about 0.1 ms to carry over, against 28 ms to rebuild. A dab on a 6000×4000 layer with a drop shadow and a stroke carries its effects over in about 31 ms, against about 15 s to rebuild them; building a large layer's effects the first time still takes that long (their blur is a direct convolution), but in the background.

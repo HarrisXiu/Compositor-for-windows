@@ -43,20 +43,21 @@ class PanTool final : public CanvasTool {
 class EyedropperTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
+    // Samples the full-size composite under the pointer, rendering just that pixel.
     void press(QMouseEvent *) override {
-        auto s = c.preview_.size();
-        int x = int(c.start_.x() * s.width() / c.document_->size().width()),
-            y = int(c.start_.y() * s.height() / c.document_->size().height());
-        if (c.preview_.valid(x, y))
-            emit c.colorPicked(c.preview_.pixelColor(x, y));
-        return;
+        const QPoint pixel(int(std::floor(c.start_.x())), int(std::floor(c.start_.y())));
+        const auto size = c.document_->size();
+        if (!QRect(QPoint(), size).contains(pixel))
+            return;
+        auto sample = renderArea(*c.document_, {size, QRect(pixel, QSize(1, 1))});
+        emit c.colorPicked(sample.pixelColor(0, 0));
     }
 };
 class WandTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
     void press(QMouseEvent *e) override {
-        auto composite = renderDocument(*c.document_);
+        auto composite = c.fullComposite();
         int x = int(c.start_.x()), y = int(c.start_.y());
         if (!composite.valid(x, y))
             return;
@@ -120,6 +121,7 @@ class MoveTool final : public CanvasTool {
         require(c.document_->active(), "Select a layer first");
 
         emit c.editStarted();
+        c.beginLayerEdit(c.document_->activeId());
         c.dragging_ = true;
         return;
     }

@@ -329,12 +329,15 @@ QImage applyFilter(const QImage &source, const QString &kind, const QJsonObject 
         adjust_black_white(p, width, height, stride, weights, s.value("tint").toBool(),
                            num(s, "tintHue", 40), num(s, "tintSaturation", 20) / 100);
     } else if (kind == "Add Noise") {
-        noise_add(p, width, height, stride, float(num(s, "amount", 10)),
-                  s.value("gaussian").toBool(), s.value("monochromatic").toBool(),
-                  uint32_t(num(s, "seed", 1)));
+        // originX/originY: where this image sits in a larger one rendered in parts.
+        noise_add_at(p, width, height, stride, float(num(s, "amount", 10)),
+                     s.value("gaussian").toBool(), s.value("monochromatic").toBool(),
+                     uint32_t(num(s, "seed", 1)), int64_t(num(s, "originX")),
+                     int64_t(num(s, "originY")));
     } else if (kind == "Grain") {
         adjust_grain(p, width, height, stride, num(s, "amount", 20), num(s, "size", 1),
-                     num(s, "roughness", 50), uint32_t(num(s, "seed", 1)), 0, 0, 1);
+                     num(s, "roughness", 50), uint32_t(num(s, "seed", 1)), num(s, "originX"),
+                     num(s, "originY"), 1);
     } else if (kind == "Gradient Map") {
         auto dark = s.value("shadows").toObject(), light = s.value("highlights").toObject();
         if (s.value("reversed").toBool())

@@ -11,6 +11,7 @@
 #include <QFocusEvent>
 #include <QInputDialog>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -19,8 +20,13 @@
 #include <QTextDocument>
 #include <QUrl>
 #include <QWheelEvent>
+#include <QtConcurrent/QtConcurrentMap>
+#include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <atomic>
+#include <climits>
 #include <cmath>
+#include <utility>
 #include <vector>
 extern "C" {
 #include "HealPixels.h"
@@ -28,6 +34,49 @@ extern "C" {
 }
 
 namespace compositor {
+namespace {
+constexpr int TileSize = 256;
+quint64 tileKey(int level, int column, int row) {
+    return quint64(level) << 56 | quint64(row) << 28 | quint64(column);
+}
+int keyLevel(quint64 key) {
+    return int(key >> 56);
+}
+int keyRow(quint64 key) {
+    return int(key >> 28 & 0xfffffff);
+}
+int keyColumn(quint64 key) {
+    return int(key & 0xfffffff);
+}
+// The document at level n is drawn at 1/2^n of its size (rounding up), level 0 at full size.
+QSize levelSize(QSize document, int level) {
+    return {(document.width() + (1 << level) - 1) >> level,
+            (document.height() + (1 << level) - 1) >> level};
+}
+int maxLevel(QSize document) {
+    int level = 0;
+    while (level < 30 && (std::max(document.width(), document.height()) >> (level + 1)) > 0)
+        ++level;
+    return level;
+}
+int tileCost(const QImage &image) {
+    return int(std::min<qint64>(image.sizeInBytes() / 1024 + 1, INT_MAX));
+}
+struct TileJob {
+    quint64 key;
+    RenderArea area;
+    QImage image, backdrop;
+    bool newBackdrop = false;
+    QString error;
+};
+} // namespace
+struct RenderBatch {
+    Document document;
+    QSize full;
+    quint64 generation = 0;
+    std::vector<TileJob> jobs;
+    std::atomic<bool> canceled{false};
+};
 Canvas::Canvas(Document *document, QWidget *parent) : Canvas(document, nullptr, parent) {}
 Canvas::Canvas(Document *document, EditorSession *session, QWidget *parent)
     : QWidget(parent), document_(document), session_(session ? session : &fallbackSession_) {
@@ -35,8 +84,15 @@ Canvas::Canvas(Document *document, EditorSession *session, QWidget *parent)
     setAcceptDrops(true);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(200, 200);
+    stampAll();
+    connect(&batchWatcher_, &QFutureWatcherBase::finished, this, &Canvas::finishBatch);
 }
-Canvas::~Canvas() = default;
+Canvas::~Canvas() {
+    if (batch_) {
+        batch_->canceled = true;
+        batchFuture_.waitForFinished();
+    }
+}
 CanvasTool &Canvas::controller() {
     auto kind = temporaryPan_ ? Tool::Pan : session_->tool;
     if (!controller_ || controllerKind_ != kind) {
@@ -54,28 +110,150 @@ QRectF Canvas::canvasRect() const {
 QPointF Canvas::toDocument(QPointF point) const {
     return (point - canvasRect().topLeft()) / zoom;
 }
-void Canvas::rebuildPreview() {
-    auto s = document_->size();
-    if (s.isEmpty())
-        return;
-    auto out = s;
-    out.scale(1600, 1600, Qt::KeepAspectRatio);
-    if (out.width() > s.width() && out.height() > s.height())
-        out = s;
-    preview_ = renderDocument(*document_, out);
+void Canvas::stampAll() {
+    const auto &d = *document_;
+    stamps_.clear();
+    stampOrder_.clear();
+    stampSize_ = d.size();
+    for (const auto &l : d.layers) {
+        stampOrder_ << l.id();
+        stamps_[l.id()] = {QJsonDocument(l.metadata).toJson(QJsonDocument::Compact),
+                           l.image.cacheKey(), l.mask.cacheKey(), layerExtent(l)};
+    }
+    composite_ = {};
+    renderError_.clear();
+}
+void Canvas::forgetTiles() {
+    tiles_.clear();
+    backdrops_.clear();
+    composite_ = {};
+    ++generation_;
+    if (batch_)
+        batch_->canceled = true;
 }
 void Canvas::refresh() {
     try {
-        rebuildPreview();
+        const auto &d = *document_;
+        QStringList order;
+        for (const auto &l : d.layers)
+            order << l.id();
+        if (d.size() != stampSize_ || order != stampOrder_) {
+            forgetTiles();
+            stampAll();
+        } else {
+            QRectF dirty;
+            bool changed = false, everything = false, others = false;
+            for (const auto &l : d.layers) {
+                auto &stamp = stamps_[l.id()];
+                auto metadata = QJsonDocument(l.metadata).toJson(QJsonDocument::Compact);
+                if (metadata == stamp.metadata && l.image.cacheKey() == stamp.image &&
+                    l.mask.cacheKey() == stamp.mask)
+                    continue;
+                changed = true;
+                // A folder or an adjustment changes everything inside or under it.
+                everything |= l.group() || l.metadata.value("adjustment").isObject();
+                others |= l.id() != editedLayer_;
+                const auto extent = layerExtent(l);
+                dirty |= stamp.extent | extent;
+                stamp = {metadata, l.image.cacheKey(), l.mask.cacheKey(), extent};
+            }
+            if (everything) {
+                forgetTiles();
+                stampAll();
+            } else if (changed) {
+                if (others)
+                    backdrops_.clear();
+                invalidate(dirty);
+                composite_ = {};
+                renderError_.clear();
+            }
+        }
     } catch (const std::exception &e) {
+        forgetTiles();
         emit error(QString::fromUtf8(e.what()));
     }
     update();
+}
+void Canvas::refreshArea(const QRectF &area) {
+    try {
+        if (!area.isEmpty()) {
+            invalidate(area);
+            // The edit was to the active layer (or its mask) alone.
+            if (auto l = document_->active(); l && stamps_.contains(l->id()))
+                stamps_[l->id()] = {QJsonDocument(l->metadata).toJson(QJsonDocument::Compact),
+                                    l->image.cacheKey(), l->mask.cacheKey(), layerExtent(*l)};
+            composite_ = {};
+        }
+    } catch (const std::exception &e) {
+        forgetTiles();
+        emit error(QString::fromUtf8(e.what()));
+    }
+    update();
+}
+// Redraws what the dabs since the last call changed, updating the edited image's render caches
+// over just that area.
+void Canvas::refreshStroke() {
+    if (auto layer = document_->active(); layer && !strokePixels_.isEmpty()) {
+        const auto &target = paintMask() ? layer->mask : layer->image;
+        try {
+            carryRenderCaches(*layer, paintMask(), carriedKey_, strokePixels_);
+        } catch (const std::exception &) {
+            // The caches are rebuilt whole by the next render instead.
+        }
+        carriedKey_ = target.cacheKey();
+        strokePixels_ = {};
+    }
+    refreshArea(std::exchange(strokeArea_, QRectF()));
+}
+// Drops the tiles a change to `area` (document pixels) shows in, including those whose pixels
+// draw from it through a blur.
+void Canvas::invalidate(const QRectF &area) {
+    if (area.isEmpty())
+        return;
+    ++generation_;
+    if (batch_)
+        batch_->canceled = true;
+    const auto doc = document_->size();
+    QHash<int, int> reaches;
+    const auto keys = tiles_.keys();
+    for (auto key : keys) {
+        const int level = keyLevel(key);
+        const auto full = levelSize(doc, level);
+        if (!reaches.contains(level))
+            reaches[level] = renderReach(*document_, full);
+        const int reach = reaches[level];
+        const double sx = double(full.width()) / doc.width(),
+                     sy = double(full.height()) / doc.height();
+        const QRectF tile(keyColumn(key) * TileSize - reach, keyRow(key) * TileSize - reach,
+                          TileSize + 2 * reach, TileSize + 2 * reach);
+        if (QRectF(tile.x() / sx, tile.y() / sy, tile.width() / sx, tile.height() / sy)
+                .intersects(area))
+            tiles_.remove(key);
+    }
+}
+// While one layer is edited repeatedly, each tile keeps what lies under it, so redrawing the
+// tile composites only that layer and those above.
+void Canvas::beginLayerEdit(const QString &id) {
+    editedLayer_ = id;
+    backdrops_.clear();
+    // Edits redraw on the UI thread, so each dab shows at once.
+    if (batch_)
+        batch_->canceled = true;
+}
+void Canvas::endLayerEdit() {
+    editedLayer_.clear();
+    backdrops_.clear();
+}
+QImage Canvas::fullComposite() {
+    if (composite_.isNull())
+        composite_ = renderDocument(*document_);
+    return composite_;
 }
 void Canvas::fit() {
     auto s = document_->size();
     if (s.isEmpty())
         return;
+    fitted_ = true;
     zoom = std::min((width() - 64.0) / s.width(), (height() - 64.0) / s.height());
     zoom = std::max(0.01, zoom);
     pan_ = {};
@@ -88,6 +266,8 @@ void Canvas::setTool(Tool value) {
         if (value == Tool::Crop && !session_->selection.isNull())
             session_->cropFrame = selectionBounds();
     }
+    if (value != Tool::Wand)
+        composite_ = {};
     session_->tool = value;
     setCursor(session_->tool == Tool::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
     update();
@@ -128,6 +308,7 @@ void Canvas::cancelInteraction() {
     coverage_ = {};
     blurred_ = {};
     lasso_ = {};
+    endLayerEdit();
     emit editCanceled();
     update();
 }
@@ -211,9 +392,8 @@ void Canvas::paintEvent(QPaintEvent *) {
         for (int x = int(clipped.left()); x <= clipped.right(); x += tile)
             p.fillRect(x, y, tile, tile,
                        ((x / tile + y / tile) & 1) ? QColor(88, 90, 95) : QColor(112, 114, 119));
-    p.setRenderHint(QPainter::SmoothPixmapTransform, zoom < 1);
-    if (!preview_.isNull())
-        p.drawImage(r, preview_);
+    drawDocument(p, r);
+    drawPixelGrid(p, r);
     const auto guides = document_->metadata.value("guides").toArray();
     p.setPen(QPen(QColor(55, 205, 220), 1));
     for (const auto &v : guides) {
@@ -272,6 +452,223 @@ void Canvas::paintEvent(QPaintEvent *) {
     }
     controller().paintOverlay(p);
 }
+// Draws the document into `target` from tiles rendered at the level that matches the zoom: at
+// least as many pixels as the screen shows, so drawing only shrinks a level by up to half, or
+// enlarges full size pixel for pixel. Only tiles that are on screen are rendered.
+void Canvas::drawDocument(QPainter &p, const QRectF &target) {
+    const auto doc = document_->size();
+    const QRectF shown = target.intersected(QRectF(rect()));
+    if (doc.isEmpty() || shown.isEmpty())
+        return;
+    const double device = zoom * devicePixelRatioF();
+    const int level =
+        std::clamp(device < 1 ? int(std::floor(std::log2(1 / device))) : 0, 0, maxLevel(doc));
+    const auto full = levelSize(doc, level);
+    const double sx = double(full.width()) / doc.width(), sy = double(full.height()) / doc.height();
+    const QRect pixels =
+        QRectF((shown.left() - target.left()) / zoom * sx, (shown.top() - target.top()) / zoom * sy,
+               shown.width() / zoom * sx, shown.height() / zoom * sy)
+            .toAlignedRect()
+            .intersected(QRect(QPoint(), full));
+    if (pixels.isEmpty())
+        return;
+    const int column0 = pixels.left() / TileSize, column1 = pixels.right() / TileSize,
+              row0 = pixels.top() / TileSize, row1 = pixels.bottom() / TileSize;
+    std::vector<TileJob> jobs;
+    QHash<quint64, QImage> ready;
+    for (int row = row0; row <= row1; ++row)
+        for (int column = column0; column <= column1; ++column) {
+            const auto key = tileKey(level, column, row);
+            if (auto tile = tiles_.object(key)) {
+                ready[key] = *tile;
+                continue;
+            }
+            TileJob job{key,
+                        {full,
+                         QRect(column * TileSize, row * TileSize, TileSize, TileSize)
+                             .intersected(QRect(QPoint(), full)),
+                         true, false}};
+            if (!editedLayer_.isEmpty())
+                if (auto backdrop = backdrops_.object(key))
+                    job.backdrop = *backdrop;
+            jobs.push_back(std::move(job));
+        }
+    if (!jobs.empty() && editedLayer_.isEmpty()) {
+        // Rendered in the background from a copy of the document; a batch that is out of date
+        // is canceled, and the next paint after it ends starts one for what is still missing.
+        if (batch_) {
+            if (batch_->full != full)
+                batch_->canceled = true;
+        } else {
+            auto batch = std::make_shared<RenderBatch>();
+            batch->document = *document_;
+            batch->full = full;
+            batch->generation = generation_;
+            batch->jobs = std::move(jobs);
+            batch_ = batch;
+            batchFuture_ = QtConcurrent::run([batch] {
+                try {
+                    prepareRender(batch->document, batch->full, true);
+                } catch (const std::exception &) {
+                    // Each tile reports its own failure.
+                }
+                QtConcurrent::blockingMap(batch->jobs, [&batch](TileJob &job) {
+                    if (batch->canceled)
+                        return;
+                    try {
+                        job.image = renderArea(batch->document, job.area);
+                    } catch (const std::exception &e) {
+                        job.error = QString::fromUtf8(e.what());
+                    }
+                });
+            });
+            batchWatcher_.setFuture(batchFuture_);
+        }
+        jobs.clear();
+    }
+    if (!jobs.empty()) {
+        QString failure;
+        try {
+            prepareRender(*document_, full, true);
+        } catch (const std::exception &e) {
+            failure = QString::fromUtf8(e.what());
+        }
+        QtConcurrent::blockingMap(jobs, [this](TileJob &job) {
+            try {
+                if (editedLayer_.isEmpty()) {
+                    job.image = renderArea(*document_, job.area);
+                    return;
+                }
+                if (job.backdrop.isNull()) {
+                    job.backdrop = renderBackdrop(*document_, job.area, editedLayer_);
+                    job.newBackdrop = true;
+                }
+                job.image = renderOver(*document_, job.area, editedLayer_, job.backdrop);
+            } catch (const std::exception &e) {
+                job.error = QString::fromUtf8(e.what());
+            }
+        });
+        for (auto &job : jobs) {
+            if (!job.error.isEmpty()) {
+                failure = job.error;
+                continue;
+            }
+            if (job.newBackdrop)
+                backdrops_.insert(job.key, new QImage(job.backdrop), tileCost(job.backdrop));
+            tiles_.insert(job.key, new QImage(job.image), tileCost(job.image));
+            ready[job.key] = job.image;
+        }
+        reportRenderError(failure);
+    }
+    // One image for all the tiles shown, so scaling it can't leave seams between them.
+    const auto span = QRect(column0 * TileSize, row0 * TileSize, (column1 - column0 + 1) * TileSize,
+                            (row1 - row0 + 1) * TileSize)
+                          .intersected(QRect(QPoint(), full));
+    QImage stitched(span.size(), QImage::Format_RGBA8888_Premultiplied);
+    if (stitched.isNull())
+        return;
+    stitched.fill(Qt::transparent);
+    {
+        QPainter s(&stitched);
+        s.setCompositionMode(QPainter::CompositionMode_Source);
+        for (int row = row0; row <= row1; ++row)
+            for (int column = column0; column <= column1; ++column) {
+                const QRect tile = QRect(column * TileSize, row * TileSize, TileSize, TileSize)
+                                       .intersected(QRect(QPoint(), full));
+                if (auto it = ready.constFind(tileKey(level, column, row)); it != ready.cend()) {
+                    s.drawImage(tile.topLeft() - span.topLeft(), it.value());
+                    continue;
+                }
+                // Not rendered yet: shown meanwhile from tiles of a coarser level, scaled up, or
+                // of the next finer one, scaled down.
+                s.save();
+                s.setClipRect(tile.translated(-span.topLeft()));
+                s.setRenderHint(QPainter::SmoothPixmapTransform);
+                for (int other : {level + 1, level + 2, level + 3, level + 4, level - 1}) {
+                    if (other < 0 || other > maxLevel(doc))
+                        continue;
+                    const auto otherFull = levelSize(doc, other);
+                    const double fx = double(full.width()) / otherFull.width(),
+                                 fy = double(full.height()) / otherFull.height();
+                    const auto there =
+                        QRectF(tile.x() / fx, tile.y() / fy, tile.width() / fx, tile.height() / fy)
+                            .toAlignedRect()
+                            .intersected(QRect(QPoint(), otherFull));
+                    bool found = false;
+                    for (int r = there.top() / TileSize; r <= there.bottom() / TileSize; ++r)
+                        for (int c = there.left() / TileSize; c <= there.right() / TileSize; ++c)
+                            if (auto cached = tiles_.object(tileKey(other, c, r))) {
+                                found = true;
+                                s.drawImage(QRectF((c * TileSize * fx) - span.x(),
+                                                   (r * TileSize * fy) - span.y(),
+                                                   cached->width() * fx, cached->height() * fy),
+                                            *cached);
+                            }
+                    if (found)
+                        break;
+                }
+                s.restore();
+            }
+    }
+    p.save();
+    p.setRenderHint(QPainter::SmoothPixmapTransform, device < sx);
+    p.drawImage(QRectF(target.left() + span.x() / sx * zoom, target.top() + span.y() / sy * zoom,
+                       span.width() / sx * zoom, span.height() / sy * zoom),
+                stitched);
+    p.restore();
+}
+void Canvas::finishBatch() {
+    // The watcher can still report a batch that waitForRendering has already taken.
+    if (!batch_ || !batchFuture_.isFinished())
+        return;
+    auto batch = std::exchange(batch_, nullptr);
+    if (!batch->canceled && batch->generation == generation_) {
+        QString failure;
+        for (auto &job : batch->jobs) {
+            if (!job.error.isEmpty())
+                failure = job.error;
+            else if (!job.image.isNull())
+                tiles_.insert(job.key, new QImage(job.image), tileCost(job.image));
+        }
+        reportRenderError(failure);
+    }
+    update();
+}
+void Canvas::waitForRendering() {
+    if (!batch_)
+        return;
+    batchFuture_.waitForFinished();
+    finishBatch();
+}
+// Reported after the current paint, once per message, so a failure can't recurse into painting.
+void Canvas::reportRenderError(const QString &message) {
+    if (message.isEmpty() || message == renderError_)
+        return;
+    renderError_ = message;
+    QMetaObject::invokeMethod(this, [this, message] { emit error(message); }, Qt::QueuedConnection);
+}
+// At 800% and above, a line between every pair of pixels.
+void Canvas::drawPixelGrid(QPainter &p, const QRectF &target) {
+    const QRectF shown = target.intersected(QRectF(rect()));
+    if (zoom < 8 || shown.isEmpty())
+        return;
+    QVector<QLineF> lines;
+    for (int x = int(std::ceil((shown.left() - target.left()) / zoom)),
+             end = int(std::floor((shown.right() - target.left()) / zoom));
+         x <= end; ++x)
+        lines << QLineF(target.left() + x * zoom, shown.top(), target.left() + x * zoom,
+                        shown.bottom());
+    for (int y = int(std::ceil((shown.top() - target.top()) / zoom)),
+             end = int(std::floor((shown.bottom() - target.top()) / zoom));
+         y <= end; ++y)
+        lines << QLineF(shown.left(), target.top() + y * zoom, shown.right(),
+                        target.top() + y * zoom);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(QPen(QColor(128, 128, 128, 90), 0));
+    p.drawLines(lines);
+    p.restore();
+}
 void Canvas::drawGesture(QPainter &p) {
     auto r = canvasRect();
     if (dragging_ && (session_->tool == Tool::RectangleSelect ||
@@ -297,7 +694,7 @@ void Canvas::drawGesture(QPainter &p) {
 }
 void Canvas::resizeEvent(QResizeEvent *e) {
     QWidget::resizeEvent(e);
-    if (preview_.isNull())
+    if (!fitted_)
         fit();
 }
 void Canvas::dab(QPointF point) {
@@ -382,6 +779,12 @@ void Canvas::dab(QPointF point) {
         layer->metadata.remove("text");
         layer->metadata.remove("shape");
     }
+    // Spot Healing only gathers coverage here; its pixels change when the stroke ends.
+    if (session_->tool != Tool::Heal && x1 >= x0 && y1 >= y0) {
+        strokePixels_ |= QRect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+        strokeArea_ |= placement.mapRect(QRectF(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+                           .adjusted(-strokeReach_, -strokeReach_, strokeReach_, strokeReach_);
+    }
     emit edited();
 }
 void Canvas::finishSelection() {
@@ -443,6 +846,7 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     } catch (const std::exception &ex) {
         emit error(QString::fromUtf8(ex.what()));
     }
+    endLayerEdit();
     dragging_ = false;
     original_ = {};
     coverage_ = {};
