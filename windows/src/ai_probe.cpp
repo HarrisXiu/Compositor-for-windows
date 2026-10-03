@@ -142,6 +142,8 @@ int main(int argc, char **argv) {
     parser.addOption({"catalog", "Write the built-in release catalog as JSON", "file"});
     parser.addOption({"runtime-check", "Check packaged runtime and HTTPS TLS support"});
     parser.addOption({"model", "Verify only this model ID from the manifest", "id"});
+    parser.addOption({"image", "Verify only this reference image filename", "file"});
+    parser.addOption({"reverse-images", "Reverse the reference image order for reuse diagnostics"});
     parser.addOption({"no-profile", "Disable profiling for CPU timing only"});
     parser.addOption({"repeat", "Repeat BiRefNet timing runs per image", "count", "1"});
     parser.addOption({"threads", "CPU intra-op thread count", "count", QString::number(aiDefaultThreads())});
@@ -208,6 +210,8 @@ int main(int argc, char **argv) {
                 "Invalid repeat count, or profiling disabled for a GPU verification");
         report["profiling"] = !parser.isSet("no-profile");
         report["repeat"] = repeat;
+        report["image_filter"] = parser.value("image");
+        report["reverse_images"] = parser.isSet("reverse-images");
         report["threads"] = options.threads;
         report["disable_metacommands"] = options.disableMetacommands;
         report["python_reference_onnxruntime"] = data.value("onnxruntime");
@@ -217,98 +221,116 @@ int main(int argc, char **argv) {
             const auto model = definition.toObject();
             const auto identifier = model.value("id").toString();
             if (parser.isSet("model") && identifier != parser.value("model")) continue;
-            const auto imageKind = kind(model.value("kind").toString());
-            const auto encoderPath = directory.filePath(model.value("encoder").toString());
-            require(digest(encoderPath) == model.value("encoder_sha256").toString().toUtf8(), "Encoder SHA256 differs from Python reference");
-            options.profilePrefix = QDir(output.absolutePath()).filePath("profile-" + identifier + "-" + policy + "-" + parser.value("adapter"));
-            if (parser.isSet("no-profile")) options.profilePrefix.clear();
-            auto encoder = imageKind == AiImageKind::BiRefNet ? AiSession::open(encoderPath, options) : std::shared_ptr<AiSession>();
-            std::shared_ptr<AiSamModel> sam;
-            if (!encoder) {
-                const auto decoderPath = directory.filePath(model.value("decoder").toString());
-                require(digest(decoderPath) == model.value("decoder_sha256").toString().toUtf8(), "Decoder SHA256 differs from Python reference");
-                sam = AiSamModel::open(encoderPath, decoderPath, imageKind, options);
-            }
             QJsonObject modelReport{{"id", identifier}, {"encoder_sha256", model.value("encoder_sha256")}};
             if (model.contains("decoder_sha256")) modelReport["decoder_sha256"] = model.value("decoder_sha256");
             QJsonArray imageReports;
-            for (const auto &item : model.value("images").toArray()) {
-                const auto imageRecord = item.toObject();
-                const auto filename = imageRecord.value("file").toString();
-                require(QFileInfo(filename).fileName() == filename, "Unsafe reference image filename");
-                const QImage image(directory.filePath(filename));
-                require(!image.isNull(), "Cannot load reference image");
-                QElapsedTimer timer;
-                timer.start();
-                auto prepared = prepareAiImage(image, imageKind);
-                const double preprocessingMs = timer.nsecsElapsed() / 1e6;
-                check(checks, identifier + "/" + filename + "/preprocess",
-                      compare(prepared.tensor, reference(directory, "image", imageRecord.value("input").toObject()), false, 1e-5, 0, 0));
-                QJsonObject imageReport{{"file", filename}, {"preprocess_ms", preprocessingMs}};
-                if (encoder) {
-                    auto result = encoder->run({prepared.tensor});
-                    compareOutputs(checks, directory, identifier + "/" + filename + "/encoder", result.outputs, imageRecord.value("encoder_outputs").toObject(), false);
-                    imageReport["encoder"] = timing(result);
-                    QJsonArray timings{result.milliseconds};
-                    for (int iteration = 1; iteration < repeat; ++iteration)
-                        timings.append(encoder->run({prepared.tensor}).milliseconds);
-                    imageReport["run_times_ms"] = timings;
-                } else {
-                    timer.restart();
-                    const auto encoded = sam->encodeOnce(image);
-                    imageReport["encode_job_ms"] = timer.nsecsElapsed() / 1e6;
-                    check(checks, identifier + "/" + filename + "/cache", {{"passed", encoded == sam->encodeOnce(image)}});
-                    compareOutputs(checks, directory, identifier + "/" + filename + "/encoder", encoded->features, imageRecord.value("encoder_outputs").toObject(), false);
-                    imageReport["encoder"] = timing(encoded->encoderResult);
-                    QJsonArray clickReports;
-                    AiTensor previous;
-                    for (const auto &value : imageRecord.value("cases").toArray()) {
-                        const auto click = value.toObject();
-                        QVector<QPointF> points;
-                        QVector<int> labels;
-                        for (const auto &point : click.value("points").toArray()) {
-                            const auto coordinates = point.toArray();
-                            points.push_back({coordinates[0].toDouble(), coordinates[1].toDouble()});
-                        }
-                        for (const auto &label : click.value("labels").toArray()) labels.push_back(label.toInt());
-                        auto result = sam->decode(encoded, points, labels, click.value("refine").toBool() ? previous : AiTensor());
-                        compareOutputs(checks, directory, identifier + "/" + filename + "/" + click.value("name").toString(), result.outputs, click.value("outputs").toObject(), true);
-                        const auto scores = result.outputs[1].floatValues();
-                        const auto expectedScores = reference(directory, "iou_predictions", click.value("outputs").toObject().value("iou_predictions").toObject()).floatValues();
-                        const int first = imageKind == AiImageKind::MobileSAM ? 1 : 0;
-                        require(scores.size() > first && scores.size() == expectedScores.size(), "Invalid SAM mask scores");
-                        const int selected = int(std::max_element(scores.begin() + first, scores.end()) - scores.begin());
-                        const int expectedSelected = int(std::max_element(expectedScores.begin() + first, expectedScores.end()) - expectedScores.begin());
-                        check(checks, identifier + "/" + filename + "/" + click.value("name").toString() + "/chosen_mask",
-                              {{"passed", selected == expectedSelected}, {"candidate", selected}, {"reference_candidate", expectedSelected}});
-                        auto clickReport = timing(result);
-                        clickReport["case"] = click.value("name");
-                        clickReports.append(clickReport);
-                        const auto &low = result.outputs[2];
-                        const int candidate = click.value("feedback_candidate").toInt();
-                        previous = {"feedback", {1, 1, 256, 256}, AiTensorType::Float32, low.bytes.mid(qsizetype(candidate) * 256 * 256 * 4, 256 * 256 * 4)};
-                    }
-                    imageReport["clicks"] = clickReports;
+            try {
+                const auto imageKind = kind(model.value("kind").toString());
+                const auto encoderPath = directory.filePath(model.value("encoder").toString());
+                require(digest(encoderPath) == model.value("encoder_sha256").toString().toUtf8(), "Encoder SHA256 differs from Python reference");
+                options.profilePrefix = QDir(output.absolutePath()).filePath("profile-" + identifier + "-" + policy + "-" + parser.value("adapter"));
+                if (parser.isSet("no-profile")) options.profilePrefix.clear();
+                auto encoder = imageKind == AiImageKind::BiRefNet ? AiSession::open(encoderPath, options) : std::shared_ptr<AiSession>();
+                std::shared_ptr<AiSamModel> sam;
+                if (!encoder) {
+                    const auto decoderPath = directory.filePath(model.value("decoder").toString());
+                    require(digest(decoderPath) == model.value("decoder_sha256").toString().toUtf8(), "Decoder SHA256 differs from Python reference");
+                    sam = AiSamModel::open(encoderPath, decoderPath, imageKind, options);
                 }
-                imageReports.append(imageReport);
+                auto imageRecords = model.value("images").toArray();
+                if (parser.isSet("reverse-images")) {
+                    QJsonArray reversed;
+                    for (qsizetype index = imageRecords.size(); index > 0; --index)
+                        reversed.append(imageRecords.at(index - 1));
+                    imageRecords = reversed;
+                }
+                for (const auto &item : imageRecords) {
+                    const auto imageRecord = item.toObject();
+                    const auto filename = imageRecord.value("file").toString();
+                    if (parser.isSet("image") && filename != parser.value("image")) continue;
+                    require(QFileInfo(filename).fileName() == filename, "Unsafe reference image filename");
+                    const QImage image(directory.filePath(filename));
+                    require(!image.isNull(), "Cannot load reference image");
+                    QElapsedTimer timer;
+                    timer.start();
+                    auto prepared = prepareAiImage(image, imageKind);
+                    const double preprocessingMs = timer.nsecsElapsed() / 1e6;
+                    check(checks, identifier + "/" + filename + "/preprocess",
+                          compare(prepared.tensor, reference(directory, "image", imageRecord.value("input").toObject()), false, 1e-5, 0, 0));
+                    QJsonObject imageReport{{"file", filename}, {"preprocess_ms", preprocessingMs}};
+                    if (encoder) {
+                        auto result = encoder->run({prepared.tensor});
+                        compareOutputs(checks, directory, identifier + "/" + filename + "/encoder", result.outputs, imageRecord.value("encoder_outputs").toObject(), false);
+                        imageReport["encoder"] = timing(result);
+                        QJsonArray timings{result.milliseconds};
+                        for (int iteration = 1; iteration < repeat; ++iteration) {
+                            auto repeated = encoder->run({prepared.tensor});
+                            compareOutputs(checks, directory, identifier + "/" + filename + "/repeat-" + QString::number(iteration + 1),
+                                           repeated.outputs, imageRecord.value("encoder_outputs").toObject(), false);
+                            timings.append(repeated.milliseconds);
+                        }
+                        imageReport["run_times_ms"] = timings;
+                    } else {
+                        timer.restart();
+                        const auto encoded = sam->encodeOnce(image);
+                        imageReport["encode_job_ms"] = timer.nsecsElapsed() / 1e6;
+                        check(checks, identifier + "/" + filename + "/cache", {{"passed", encoded == sam->encodeOnce(image)}});
+                        compareOutputs(checks, directory, identifier + "/" + filename + "/encoder", encoded->features, imageRecord.value("encoder_outputs").toObject(), false);
+                        imageReport["encoder"] = timing(encoded->encoderResult);
+                        QJsonArray clickReports;
+                        AiTensor previous;
+                        for (const auto &value : imageRecord.value("cases").toArray()) {
+                            const auto click = value.toObject();
+                            QVector<QPointF> points;
+                            QVector<int> labels;
+                            for (const auto &point : click.value("points").toArray()) {
+                                const auto coordinates = point.toArray();
+                                points.push_back({coordinates[0].toDouble(), coordinates[1].toDouble()});
+                            }
+                            for (const auto &label : click.value("labels").toArray()) labels.push_back(label.toInt());
+                            auto result = sam->decode(encoded, points, labels, click.value("refine").toBool() ? previous : AiTensor());
+                            compareOutputs(checks, directory, identifier + "/" + filename + "/" + click.value("name").toString(), result.outputs, click.value("outputs").toObject(), true);
+                            const auto scores = result.outputs[1].floatValues();
+                            const auto expectedScores = reference(directory, "iou_predictions", click.value("outputs").toObject().value("iou_predictions").toObject()).floatValues();
+                            const int first = imageKind == AiImageKind::MobileSAM ? 1 : 0;
+                            require(scores.size() > first && scores.size() == expectedScores.size(), "Invalid SAM mask scores");
+                            const int selected = int(std::max_element(scores.begin() + first, scores.end()) - scores.begin());
+                            const int expectedSelected = int(std::max_element(expectedScores.begin() + first, expectedScores.end()) - expectedScores.begin());
+                            check(checks, identifier + "/" + filename + "/" + click.value("name").toString() + "/chosen_mask",
+                                  {{"passed", selected == expectedSelected}, {"candidate", selected}, {"reference_candidate", expectedSelected}});
+                            auto clickReport = timing(result);
+                            clickReport["case"] = click.value("name");
+                            clickReports.append(clickReport);
+                            const auto &low = result.outputs[2];
+                            const int candidate = click.value("feedback_candidate").toInt();
+                            previous = {"feedback", {1, 1, 256, 256}, AiTensorType::Float32, low.bytes.mid(qsizetype(candidate) * 256 * 256 * 4, 256 * 256 * 4)};
+                        }
+                        imageReport["clicks"] = clickReports;
+                    }
+                    imageReports.append(imageReport);
+                }
+                require(!imageReports.isEmpty(), "No reference image matches the requested filename");
+                if (encoder) {
+                    modelReport["load_ms"] = encoder->initializationMilliseconds();
+                    modelReport["encoder_profile"] = profile(encoder->finishProfiling());
+                } else {
+                    modelReport["encoder_runs"] = double(sam->encoderRuns());
+                    modelReport["load_ms"] = sam->encoderSession()->initializationMilliseconds() + sam->decoderSession()->initializationMilliseconds();
+                    modelReport["encoder_profile"] = profile(sam->encoderSession()->finishProfiling());
+                    modelReport["decoder_profile"] = profile(sam->decoderSession()->finishProfiling());
+                }
+                if (policy == "dml") {
+                    for (const auto &name : {"encoder_profile", "decoder_profile"}) {
+                        if (!modelReport.contains(name)) continue;
+                        const auto executed = modelReport.value(name).toObject().value("executed_nodes").toObject();
+                        check(checks, identifier + "/" + name + "/gpu_execution", {{"passed", executed.value("DmlExecutionProvider").toInt() > 0}, {"nodes", executed}});
+                    }
+                }
+            } catch (const std::exception &error) {
+                modelReport["error"] = QString::fromUtf8(error.what());
+                check(checks, identifier + "/runtime", {{"passed", false}, {"reason", QString::fromUtf8(error.what())}});
             }
             modelReport["images"] = imageReports;
-            if (encoder) {
-                modelReport["load_ms"] = encoder->initializationMilliseconds();
-                modelReport["encoder_profile"] = profile(encoder->finishProfiling());
-            } else {
-                modelReport["encoder_runs"] = double(sam->encoderRuns());
-                modelReport["load_ms"] = sam->encoderSession()->initializationMilliseconds() + sam->decoderSession()->initializationMilliseconds();
-                modelReport["encoder_profile"] = profile(sam->encoderSession()->finishProfiling());
-                modelReport["decoder_profile"] = profile(sam->decoderSession()->finishProfiling());
-            }
-            if (policy == "dml") {
-                for (const auto &name : {"encoder_profile", "decoder_profile"}) {
-                    if (!modelReport.contains(name)) continue;
-                    const auto executed = modelReport.value(name).toObject().value("executed_nodes").toObject();
-                    check(checks, identifier + "/" + name + "/gpu_execution", {{"passed", executed.value("DmlExecutionProvider").toInt() > 0}, {"nodes", executed}});
-                }
-            }
             models.append(modelReport);
         }
         require(!models.isEmpty(), "No reference model matches the requested ID");

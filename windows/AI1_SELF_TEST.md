@@ -8,7 +8,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\self-test.ps1
 
 不需要安装 Python、Qt、Visual Studio，也不需要联网或管理员权限。测试开始时校验所有文件 SHA256；不要只复制 EXE。建议接通电源、关闭其他大型计算程序，并保证数 GB 可用磁盘空间。完整模型的 CPU 检查可能需要数分钟。
 
-默认运行运行库/Schannel HTTPS 检查、8 组测试、应用启动、所有模型的 CPU 精度、Lite CPU 测速，然后逐一验证所有支持 DX12 的硬件显卡。`dml` 验证不会把整个会话静默回退到 CPU；Profiler 必须确认 GPU 节点执行。Intel 默认使用已验证的通用 DirectML 算子路径。GPU 默认检查失败时会另生成通用算子的诊断报告，原始失败仍保留。
+默认运行运行库/Schannel HTTPS 检查、8 组测试、应用启动、所有模型的 CPU 精度、Lite CPU 测速，然后逐一验证所有支持 DX12 的硬件显卡。新版 GPU 检查对每个模型启动独立进程，避免单个模型挂起时丢失其余模型的结果。`dml` 验证不会把整个会话静默回退到 CPU；Profiler 必须确认 GPU 节点执行。Intel 默认使用已验证的通用 DirectML 算子路径。GPU 默认检查失败时会另生成通用算子的诊断报告，原始失败仍保留。
 
 只有 CPU 或旧显卡的电脑：
 
@@ -34,3 +34,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\self-test.ps1
 返回 ZIP 不包含权重或参考张量，也不会自动上传。日志含硬件/驱动信息及本地路径。测试是 ONNX 数值一致性和运行库/基础功能回归，不等于有标注分割质量、头发/肖像质量、Mac 视觉一致性或统一速度验收。此包中的上游 SAM 2 三张样本图仅用于本地验证，不能放入面向用户的模型发布资产。
 
 源码中的 `windows/prepare_ai_delivery.py` 用标准库组装本地包；应用运行与另一台电脑上的自测试都不依赖 Python。默认包含 Lite、SAM 2、MobileSAM；生成包时的 `--include-full-birefnet` 可额外包含完整 BiRefNet。
+
+GPU 失败后的定位复测使用小型诊断包，见 [AI1_GPU_RETEST.md](AI1_GPU_RETEST.md)。原始 results-20261003-180958 的 CPU/基础检查通过，GPU 检查失败；不得记为完整 AI1 验收通过。

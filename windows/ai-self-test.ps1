@@ -114,12 +114,20 @@ try {
     if (-not $CpuOnly -and $taskDevices.Count) {
         foreach ($taskDevice in $taskDevices) {
             Write-Host ("GPU " + $taskDevice.index + ': ' + $taskDevice.name)
-            $taskOutput = Join-Path $taskRun ("dml-" + $taskDevice.index + '.json')
-            $taskExit = Invoke-AiCheck ("dml-fidelity-" + $taskDevice.index) $taskProbe @('--references',$taskManifest,'--provider','dml','--adapter',"$($taskDevice.index)",'--threads',"$Threads",'--output',$taskOutput)
-            if ($taskExit -ne 0) {
-                # Keep the default failure; this second report is diagnostic evidence only.
-                $taskOutput = Join-Path $taskRun ("dml-portable-diagnostic-" + $taskDevice.index + '.json')
-                $null = Invoke-AiCheck ("dml-portable-diagnostic-" + $taskDevice.index) $taskProbe @('--references',$taskManifest,'--provider','dml','--adapter',"$($taskDevice.index)",'--disable-metacommands','--output',$taskOutput)
+            $taskDefinitions = (Get-Content -LiteralPath $taskManifest -Raw | ConvertFrom-Json).models
+            foreach ($taskModel in $taskDefinitions) {
+                $taskId = $taskModel.id
+                if ($taskId -notmatch '^[a-z0-9-]+$') { throw 'Unsafe model identifier.' }
+                $taskName = "dml-$($taskDevice.index)-$taskId"
+                $taskOutput = Join-Path $taskRun ($taskName + '.json')
+                $taskCommon = @('--references',$taskManifest,'--adapter',"$($taskDevice.index)",'--threads',"$Threads",'--model',$taskId)
+                $taskExit = Invoke-AiCheck $taskName $taskProbe ($taskCommon + @('--provider','dml','--output',$taskOutput))
+                if ($taskExit -ne 0) {
+                    # Keep the default failure; this second report is diagnostic evidence only.
+                    $taskName += '-portable-diagnostic'
+                    $taskOutput = Join-Path $taskRun ($taskName + '.json')
+                    $null = Invoke-AiCheck $taskName $taskProbe ($taskCommon + @('--provider','dml','--disable-metacommands','--output',$taskOutput))
+                }
             }
         }
     } else {

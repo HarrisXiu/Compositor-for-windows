@@ -6,6 +6,7 @@
 #include <QThread>
 #include <QtConcurrent/QtConcurrentRun>
 #include <dml_provider_factory.h>
+#include <DirectML.h>
 #include <dxgi1_6.h>
 #include <onnxruntime_cxx_api.h>
 #include <wrl/client.h>
@@ -144,8 +145,23 @@ struct AiSession::Impl {
     double initializationMs = 0;
     bool profiling = false, metacommandsDisabled = false;
     mutable std::mutex mutex;
+    Microsoft::WRL::ComPtr<IDMLDevice> dmlDevice;
+    Microsoft::WRL::ComPtr<ID3D12Device> d3dDevice;
     Ort::Session session{nullptr};
+    void checkDevice() const {
+        if (!dmlDevice) return;
+        const auto dmlStatus = dmlDevice->GetDeviceRemovedReason();
+        const auto d3dStatus = d3dDevice->GetDeviceRemovedReason();
+        if (FAILED(dmlStatus) || FAILED(d3dStatus)) {
+            const auto message = QString("DirectML device failed on %1 (DML=0x%2, D3D12=0x%3)")
+                .arg(adapter).arg(quint32(dmlStatus), 8, 16, QLatin1Char('0'))
+                .arg(quint32(d3dStatus), 8, 16, QLatin1Char('0')).toUtf8();
+            throw Ort::Exception(message.constData(), ORT_EP_FAIL);
+        }
+    }
     void create(bool directML) {
+        dmlDevice.Reset();
+        d3dDevice.Reset();
         Ort::SessionOptions configuration;
         configuration.SetIntraOpNumThreads(options.threads);
         configuration.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -177,6 +193,13 @@ struct AiSession::Impl {
             } else {
                 Ort::ThrowOnError(dml->SessionOptionsAppendExecutionProvider_DML(configuration, index));
             }
+            // ONNX Runtime 1.24.4 returns a borrowed pointer; retain our own reference.
+            IDMLDevice *borrowedDevice = nullptr;
+            Ort::ThrowOnError(dml->GetDMLDevice(configuration, &borrowedDevice));
+            require(borrowedDevice != nullptr, "DirectML provider returned no device");
+            dmlDevice = borrowedDevice;
+            require(SUCCEEDED(dmlDevice->GetParentDevice(IID_PPV_ARGS(d3dDevice.GetAddressOf()))),
+                    "Cannot inspect the DirectML parent device");
             adapter = found->name;
         }
         if (!options.profilePrefix.isEmpty()) {
@@ -218,7 +241,10 @@ struct AiSession::Impl {
         for (auto &name : outputNames) outputPointers.push_back(name.c_str());
         QElapsedTimer timer;
         timer.start();
+        checkDevice();
         auto outputs = session.Run(*runOptions, inputPointers.data(), tensors.data(), tensors.size(), outputPointers.data(), outputPointers.size());
+        // A removed device may complete without throwing and leave invalid readback data.
+        checkDevice();
         AiRunResult result{{}, provider, adapter, fallback, timer.nsecsElapsed() / 1e6, metacommandsDisabled};
         for (size_t i = 0; i < outputs.size(); ++i) {
             require(outputs[i].IsTensor(), "AI model returned a non-tensor output");

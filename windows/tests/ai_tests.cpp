@@ -5,6 +5,9 @@
 #include <QTemporaryDir>
 #include <QtTest>
 #include <cmath>
+#include <d3d12.h>
+#include <dxgi1_6.h>
+#include <wrl/client.h>
 
 using namespace compositor;
 class AiTests : public QObject {
@@ -46,6 +49,38 @@ class AiTests : public QObject {
         auto result = session->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))});
         QCOMPARE(result.backend, QString("CPU"));
         QVERIFY(!result.fallbackReason.isEmpty());
+        QCOMPARE(result.outputs.first().floatValues().first(), 7.0f);
+    }
+    void directMLDeviceLossFallsBack() {
+        // Run this in its own process: RemoveDevice invalidates this process's D3D device.
+        if (!qEnvironmentVariableIsSet("COMPOSITOR_AI_DEVICE_LOSS_TEST"))
+            QSKIP("Opt-in DirectML device-loss regression");
+        AiOptions options;
+        auto adapters = aiAdapters();
+        for (const auto &adapter : adapters)
+            if (adapter.directX12) { options.adapterIndex = adapter.index; break; }
+        QVERIFY(options.adapterIndex >= 0);
+        const QList<AiTensor> inputs{AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))};
+        for (int iteration = 0; iteration < 5; ++iteration) {
+            auto disposable = AiSession::open(model_, options);
+            QCOMPARE(disposable->run(inputs).backend, QString("DirectML+CPU"));
+        }
+        auto fallbackSession = AiSession::open(model_, options);
+        options.policy = AiProviderPolicy::DirectMLOnly;
+        auto strictSession = AiSession::open(model_, options);
+        QCOMPARE(strictSession->run(inputs).outputs.first().floatValues().first(), 7.0f);
+        using Microsoft::WRL::ComPtr;
+        ComPtr<IDXGIFactory1> factory;
+        QVERIFY(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(factory.GetAddressOf()))));
+        ComPtr<IDXGIAdapter1> adapter;
+        QVERIFY(SUCCEEDED(factory->EnumAdapters1(options.adapterIndex, adapter.GetAddressOf())));
+        ComPtr<ID3D12Device5> device;
+        QVERIFY(SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.GetAddressOf()))));
+        device->RemoveDevice();
+        QVERIFY_EXCEPTION_THROWN(strictSession->run(inputs), std::exception);
+        auto result = fallbackSession->run(inputs);
+        QCOMPARE(result.backend, QString("CPU"));
+        QVERIFY(result.fallbackReason.contains("DirectML device failed"));
         QCOMPARE(result.outputs.first().floatValues().first(), 7.0f);
     }
     void asynchronousInference() {

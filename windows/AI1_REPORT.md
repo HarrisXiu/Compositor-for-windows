@@ -1,6 +1,6 @@
 # AI1 implementation and acceptance — 2026-10-03
 
-AI1's local implementation is integrated and regression-tested. Full acceptance remains open for AMD and physical machines without a DX12 GPU; the user will run the offline self-test on another AMD computer and bring back results. No remote Release, model upload, push or signing is performed.
+AI1's local implementation is integrated and regression-tested. Full acceptance remains open: returned AMD/NVIDIA evidence contains GPU failures, and physical machines without a DX12 GPU remain untested. No remote Release, model upload, push or signing is performed.
 
 ## Implementation
 
@@ -34,9 +34,25 @@ Release passes eight CTest suites, including model/download regressions. Ten Pyt
 
 windows/ai-self-test.ps1 runs offline on another Windows x64 computer, verifies integrity, records hardware/drivers, runs eight suites and actual models, then creates a results ZIP without weights/reference tensors. GPU default-path failures remain failed even if separate portable-kernel diagnostics pass. See AI1_SELF_TEST.md.
 
+## Returned second-machine evidence
+
+The user's results-20261003-180958 was preserved unchanged under artifacts/ai1/returned-7800x3d-4070super/. Hardware: Ryzen 7 7800X3D (8 cores / 16 logical processors), Radeon integrated graphics (driver 32.0.21030.2001), RTX 4070 SUPER (32.0.16.1692), Windows 11 25H2 and a MuMu virtual display driver exposing a duplicate NVIDIA adapter. That driver is inventory evidence; causation is unproven.
+
+Integrity, TLS, eight suites, application smoke and CPU 132/132 pass. Lite CPU nine unprofiled runs average 3881.05 ms (3858.85–3934.07 ms), excluding load/preprocessing.
+
+NVIDIA adapter 0 and duplicate adapter 2 pass 137/138 checks on the default path: full BiRefNet 7/7, SAM 2 65/65, MobileSAM 59/59, Lite 6/7. Lite groceries has mask IoU 0.42480 and probability MAE 0.42515, far outside 0.995/0.001 limits, and takes 5.55–6.74 seconds instead of about 0.11 seconds. Portable diagnostics also fail 137/138, this time full BiRefNet groceries (IoU 0.37127, probability MAE 0.52768); Lite passes there.
+
+AMD full BiRefNet truck passes, cars fails (mask IoU 0.42645, probability MAE 0.27056), then groceries raises 0x887A0006 (device hung) in DmlFusedNode_0_3. Both kernel modes fail. The old all-model process aborts, so no AMD Lite/SAM acceptance can be inferred.
+
+Root cause remains unconfirmed. No tolerance was relaxed. A runtime guard now checks both DirectML and parent D3D12 device removal before/after Run; PreferDirectML releases the failed GPU session and retries CPU, while DirectMLOnly fails explicitly. This detects device loss, not every numerical defect. ONNX Runtime 1.24.4 returns a borrowed GetDMLDevice pointer, so the guard retains its own COM reference. See [Microsoft device-removal guidance](https://learn.microsoft.com/en-us/windows/ai/directml/dml-errors) and the [pinned factory implementation](https://github.com/microsoft/onnxruntime/blob/v1.24.4/onnxruntime/core/providers/dml/dml_provider_factory.cc).
+
+The probe now preserves per-model runtime failures, verifies every repeated BiRefNet output, and supports image filtering/reversed order. Normal self-tests use separate GPU processes per model. A small offline overlay, windows/ai-gpu-retest.ps1 / prepare_ai_gpu_retest.py, diagnoses isolated models, repeated/reversed/single-image runs, portable kernels and automatic fallback. It stages verified original DLLs beside the new EXE because Windows' System32 contains an older ONNX Runtime on our development machine. Diagnostic successes never replace a failed default test. The overlay does not replace the application, original models, base manifest or returned evidence. See AI1_GPU_RETEST.md.
+
+Updated Release passes all eight CTest suites. A separate opt-in directMLDeviceLossFallsBack test creates/destroys five GPU sessions, invalidates the process's logical D3D12 device, checks strict-mode failure and verifies PreferDirectML returns correct CPU output with a device diagnostic; 3/3 Qt cases pass without skips. A probe fixture retains a missing-model failure while successfully validating the next model and every repeated output. The final small overlay runs in Windows PowerShell 5.1 with packaged DLLs: RTX 4080 Laptop and Intel UHD each pass 150/150 checks across all four models, including three runs per BiRefNet image. These local results do not supersede the returned machine's failed acceptance.
+
 ## Remaining acceptance
 
-- AMD: inspect the user's returned precision/profile reports.
+- Retest the returned AMD integrated / RTX 4070 SUPER GPU failures with the diagnostic overlay; root cause and acceptance remain open.
 - Physical no-DX12 machine: confirm automatic CPU fallback and usable performance.
 - Hardware-wide speed/memory, segmentation ground-truth quality and Mac parity remain unproven.
 - Subject/object selection, matte refinement and background-removal UI are later application tools.
