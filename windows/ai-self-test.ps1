@@ -15,7 +15,8 @@ if (-not (Test-Path -LiteralPath $taskProbe) -or -not (Test-Path -LiteralPath $t
     throw 'Extract the complete AI1 self-test bundle before running this script.'
 }
 if ($CpuOnly -and $SkipCpu) { throw 'CpuOnly and SkipCpu cannot be used together.' }
-$taskRun = Join-Path $taskRoot ('results-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$taskStarted = Get-Date
+$taskRun = Join-Path $taskRoot ('results-' + $taskStarted.ToString('yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $taskRun | Out-Null
 $taskResults = [Collections.Generic.List[object]]::new()
 $taskPreviousPath = $env:PATH
@@ -23,6 +24,18 @@ $taskPreviousQpa = $env:QT_QPA_PLATFORM
 $taskPreviousPluginPath = $env:QT_PLUGIN_PATH
 $taskPreviousScreenshot = $env:COMPOSITOR_AI_DIALOG_SCREENSHOT
 $taskTranscript = $false
+function Get-AiSha256([string]$Path) {
+    # Use the framework directly so hashing does not depend on module auto-loading.
+    $taskAlgorithm = [Security.Cryptography.SHA256]::Create()
+    $taskStream = $null
+    try {
+        $taskStream = [IO.File]::OpenRead($Path)
+        return [BitConverter]::ToString($taskAlgorithm.ComputeHash($taskStream)).Replace('-','')
+    } finally {
+        if ($taskStream) { $taskStream.Dispose() }
+        $taskAlgorithm.Dispose()
+    }
+}
 function Invoke-AiCheck([string]$Name, [string]$Executable, [string[]]$Arguments) {
     Write-Host ("Running " + $Name + ' ...')
     $taskLog = Join-Path $taskRun ($Name + '.log')
@@ -58,7 +71,7 @@ try {
     foreach ($taskFile in $taskFiles) {
         $taskPath = [IO.Path]::GetFullPath((Join-Path $taskRoot $taskFile.path))
         if (-not $taskPath.StartsWith($taskBoundary,[StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe bundle integrity path.' }
-        if (-not (Test-Path -LiteralPath $taskPath) -or (Get-FileHash -LiteralPath $taskPath -Algorithm SHA256).Hash -ne $taskFile.sha256) {
+        if (-not (Test-Path -LiteralPath $taskPath) -or (Get-AiSha256 $taskPath) -ne $taskFile.sha256) {
             throw ('Bundle file is missing or damaged: ' + $taskFile.path)
         }
     }
@@ -115,18 +128,34 @@ try {
         foreach ($taskDevice in $taskDevices) {
             Write-Host ("GPU " + $taskDevice.index + ': ' + $taskDevice.name)
             $taskDefinitions = (Get-Content -LiteralPath $taskManifest -Raw | ConvertFrom-Json).models
+            # Verify the smaller models first; full BiRefNet is the final stress test.
+            $taskDefinitions = @($taskDefinitions | Sort-Object { if ($_.id -eq 'birefnet') { 1 } else { 0 } })
             foreach ($taskModel in $taskDefinitions) {
                 $taskId = $taskModel.id
                 if ($taskId -notmatch '^[a-z0-9-]+$') { throw 'Unsafe model identifier.' }
                 $taskName = "dml-$($taskDevice.index)-$taskId"
                 $taskOutput = Join-Path $taskRun ($taskName + '.json')
                 $taskCommon = @('--references',$taskManifest,'--adapter',"$($taskDevice.index)",'--threads',"$Threads",'--model',$taskId)
-                $taskExit = Invoke-AiCheck $taskName $taskProbe ($taskCommon + @('--provider','dml','--output',$taskOutput))
+                $taskRepeat = if ($taskId -like 'birefnet*') { '3' } else { '1' }
+                $taskExit = Invoke-AiCheck $taskName $taskProbe ($taskCommon + @('--provider','dml','--repeat',$taskRepeat,'--output',$taskOutput))
                 if ($taskExit -ne 0) {
-                    # Keep the default failure; this second report is diagnostic evidence only.
-                    $taskName += '-portable-diagnostic'
-                    $taskOutput = Join-Path $taskRun ($taskName + '.json')
-                    $null = Invoke-AiCheck $taskName $taskProbe ($taskCommon + @('--provider','dml','--disable-metacommands','--output',$taskOutput))
+                    # Diagnostic successes never replace the failed default result.
+                    $taskDiagnostic = $taskName + '-portable-diagnostic'
+                    $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
+                    $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','dml','--repeat',$taskRepeat,'--disable-metacommands','--output',$taskOutput))
+                    if ($taskId -like 'birefnet*') {
+                        $taskDiagnostic = $taskName + '-reverse'
+                        $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
+                        $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','dml','--reverse-images','--output',$taskOutput))
+                        foreach ($taskImage in @('cars.png','groceries.png')) {
+                            $taskDiagnostic = $taskName + '-fresh-' + [IO.Path]::GetFileNameWithoutExtension($taskImage)
+                            $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
+                            $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','dml','--image',$taskImage,'--repeat','3','--output',$taskOutput))
+                        }
+                    }
+                    $taskDiagnostic = $taskName + '-auto-fallback'
+                    $taskOutput = Join-Path $taskRun ($taskDiagnostic + '.json')
+                    $null = Invoke-AiCheck $taskDiagnostic $taskProbe ($taskCommon + @('--provider','prefer','--output',$taskOutput))
                 }
             }
         }
@@ -137,6 +166,12 @@ try {
     $taskResults.Add([pscustomobject]@{ name = 'self-test'; status = 'failed'; error = $_.Exception.Message })
     Write-Host $_.Exception.Message -ForegroundColor Red
 } finally {
+    try {
+        $taskEvents = @(Get-WinEvent -FilterHashtable @{LogName='System';StartTime=$taskStarted.AddMinutes(-1)} -ErrorAction Stop |
+            Where-Object {$_.ProviderName -match 'Display|nvlddmkm|amdwddmg|amdkmdag|DxgKrnl|WHEA'} |
+            Select-Object TimeCreated,Id,LevelDisplayName,ProviderName,Message)
+        ConvertTo-Json -InputObject $taskEvents -Depth 5 | Set-Content -LiteralPath (Join-Path $taskRun 'gpu-system-events.json') -Encoding utf8
+    } catch { $_.Exception.Message | Set-Content -LiteralPath (Join-Path $taskRun 'gpu-system-events-unavailable.txt') -Encoding utf8 }
     $env:PATH = $taskPreviousPath
     $env:QT_QPA_PLATFORM = $taskPreviousQpa
     $env:QT_PLUGIN_PATH = $taskPreviousPluginPath

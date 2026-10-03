@@ -147,13 +147,13 @@ def main():
     scripts = Path(__file__).resolve().parent
     shutil.copy2(scripts / "ai-self-test.ps1", bundle / "self-test.ps1")
     shutil.copy2(scripts / "AI1_SELF_TEST.md", bundle / "README.md")
-    (bundle / "run-self-test.cmd").write_text(
-        '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0self-test.ps1"\r\n'
-        'set "AI1_RESULT=%ERRORLEVEL%"\r\npause\r\nexit /b %AI1_RESULT%\r\n', encoding="ascii")
+    (bundle / "开始测试.cmd").write_text(
+        '@echo off\r\npowershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "%~dp0self-test.ps1" %*\r\n'
+        'set "AI1_RESULT=%ERRORLEVEL%"\r\npause\r\nexit /b %AI1_RESULT%\r\n', encoding="ascii", newline="")
     integrity = [{"path": path.relative_to(bundle).as_posix(), "sha256": sha256(path)}
                  for path in sorted(bundle.rglob("*")) if path.is_file()]
     (bundle / "SHA256SUMS.json").write_text(json.dumps(integrity, indent=2) + "\n", encoding="utf-8")
-    archive = args.output / "AI1-self-test.zip"
+    archive = args.output / "AI1-complete-self-test.zip"
     with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as output:
         for path in sorted(bundle.rglob("*")):
             if path.is_file():
