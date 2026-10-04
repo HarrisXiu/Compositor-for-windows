@@ -1126,6 +1126,19 @@ class UiTests : public QObject {
         QCOMPARE(page.document.size(), QSize(300, 400));
         QCOMPARE(at(150, 200), QColor(Qt::red));
     }
+    // Destroying a modified page clears its undo stack, which must not tell the window that owns
+    // it, already tearing down, to refresh its panels.
+    void destroyingAModifiedPageDoesNotNotifyItsWindow() {
+        auto d = Document::create({8, 8});
+        d.addBlank("Layer");
+        auto page = new EditorPage(d);
+        page->edit("Rename", [](Document &document) { document.active()->metadata["name"] = "Renamed"; });
+        QVERIFY(page->isModified());
+        int notified = 0;
+        connect(page, &EditorPage::documentChanged, this, [&] { ++notified; });
+        delete page;
+        QCOMPARE(notified, 0);
+    }
     void pixelGridAppearsAt800Percent() {
         auto d = Document::create({16, 16});
         QImage white(16, 16, QImage::Format_RGBA8888_Premultiplied);

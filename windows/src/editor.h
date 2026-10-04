@@ -20,6 +20,7 @@ class EditorPage : public QWidget {
     Q_OBJECT
   public:
     explicit EditorPage(Document document, QWidget *parent = nullptr);
+    ~EditorPage() override;
     Document document;
     EditorSession session;
     Canvas *canvas;

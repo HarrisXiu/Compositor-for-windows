@@ -103,6 +103,11 @@ EditorPage::EditorPage(Document source, QWidget *parent)
             });
     connect(&history, &QUndoStack::cleanChanged, this, [this] { emit documentChanged(); });
 }
+EditorPage::~EditorPage() {
+    // The window that owns this page is tearing down its tabs; clearing the undo stack below must
+    // not tell it to refresh panels it is already destroying.
+    disconnect(this, &EditorPage::documentChanged, nullptr, nullptr);
+}
 void EditorPage::changed() {
     QSet<QString> valid;
     for (const auto &layer : document.layers)
