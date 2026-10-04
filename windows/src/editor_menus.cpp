@@ -189,6 +189,7 @@ void EditorWindow::buildMenus() {
     });
     layer->addSeparator();
     action(layer, "Add White Mask", {}, [this] { addMask(); });
+    action(layer, "Mask from Selection", {}, [this] { maskFromSelection(); });
     action(layer, "Invert Mask", {}, [this] {
         if (page())
             page()->edit("Invert Mask", [](Document &d) {
@@ -292,6 +293,10 @@ void EditorWindow::buildMenus() {
             page()->canvas->featherSelection(radius);
         }
     });
+    action(select, "Expand…", {}, [this] { resizeSelectionDialog(true); });
+    action(select, "Contract…", {}, [this] { resizeSelectionDialog(false); });
+    action(select, "Color Range…", {}, [this] { colorRangeDialog(); });
+    action(select, "Mask from Selection", {}, [this] { maskFromSelection(); });
     auto image = menuBar()->addMenu("&Image");
     action(image, "Crop to Selection", {}, [this] { crop(); });
     action(image, "Canvas Size…", QKeySequence("Ctrl+Alt+C"), [this] { canvasSizeDialog(); });

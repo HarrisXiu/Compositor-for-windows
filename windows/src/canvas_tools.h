@@ -13,6 +13,7 @@ class CanvasTool {
     virtual ~CanvasTool() = default;
     virtual void press(QMouseEvent *) {}
     virtual void move(QMouseEvent *) {}
+    virtual void doubleClick(QMouseEvent *) {}
     virtual void release(QMouseEvent *) {}
     virtual bool keyPress(QKeyEvent *) {
         return false;

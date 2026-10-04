@@ -95,6 +95,12 @@ void Canvas::zoomTo(double value, QPointF anchor) {
     emit sessionChanged();
 }
 void Canvas::cycleToolMode() {
+    if (session_->tool == Tool::Lasso) {
+        cancelInteraction();
+        session_->polygonalLasso = !session_->polygonalLasso;
+        emit sessionChanged();
+        return;
+    }
     const QVector<QVector<Tool>> groups{{Tool::Brush, Tool::Erase},
                                         {Tool::RectangleSelect, Tool::EllipseSelect},
                                         {Tool::Rectangle, Tool::Ellipse, Tool::Line},

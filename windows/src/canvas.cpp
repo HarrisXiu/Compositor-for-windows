@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "canvas.h"
 #include "canvas_tools.h"
+#include "selection_operations.h"
 #include "editable_layers.h"
 #include "filters.h"
 #include "render.h"
@@ -309,10 +310,22 @@ void Canvas::mouseDoubleClickEvent(QMouseEvent *event) {
     if (session_->tool == Tool::Crop && event->button() == Qt::LeftButton) {
         applyCropFrame();
         event->accept();
+    } else if (session_->tool == Tool::Lasso && session_->polygonalLasso &&
+               event->button() == Qt::LeftButton) {
+        try {
+            controller().doubleClick(event);
+        } catch (const std::exception &ex) {
+            cancelInteraction();
+            emit error(QString::fromUtf8(ex.what()));
+        }
+        event->accept();
     } else
         QWidget::mouseDoubleClickEvent(event);
 }
 void Canvas::cancelInteraction() {
+    polygonPoints_.clear();
+    lasso_ = {};
+    update();
     if (!dragging_)
         return;
     dragging_ = false;
@@ -377,6 +390,13 @@ void Canvas::featherSelection(double radius) {
     auto rgba = session_->selection.convertToFormat(QImage::Format_RGBA8888);
     replaceSelection(gaussianBlur(rgba, radius).convertToFormat(QImage::Format_Grayscale8),
                      "Feather Selection");
+}
+void Canvas::resizeSelection(int radius, bool expand) {
+    cancelInteraction();
+    if (session_->selection.isNull())
+        return;
+    replaceSelection(resizeSelectionMask(session_->selection, radius, expand),
+                     expand ? "Expand Selection" : "Contract Selection");
 }
 QRect Canvas::selectionBounds() const {
     if (session_->selection.isNull())
@@ -903,7 +923,7 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
               : brushTool() && !temporaryPicker_           ? Qt::BlankCursor
                                                            : Qt::CrossCursor);
     update();
-    if (!dragging_)
+    if (!dragging_ && polygonPoints_.isEmpty())
         return;
     try {
         if (moveOverlayEdit(e))

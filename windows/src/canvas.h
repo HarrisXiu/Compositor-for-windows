@@ -57,6 +57,7 @@ class Canvas : public QWidget {
     void invertSelection();
     void replaceSelection(const QImage &mask, const QString &label);
     void featherSelection(double radius);
+    void resizeSelection(int radius, bool expand);
     void cancelInteraction();
     void applyCropFrame();
     void cancelCropFrame();
@@ -114,6 +115,7 @@ class Canvas : public QWidget {
     bool dragging_ = false, cloneReady_ = false;
     Qt::KeyboardModifiers selectionModifiers_{};
     QPainterPath lasso_;
+    QVector<QPointF> polygonPoints_;
     QPainterPath selectionOutline_;
     qint64 selectionOutlineKey_ = 0;
     // The document as drawn: tiles of it at power-of-two reductions (see drawDocument).
