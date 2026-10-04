@@ -53,6 +53,7 @@ struct EditorSession {
     double wandTolerance = 32;
     bool wandContiguous = true;
     bool wandMerged = true, selectionAntialiased = true;
+    bool polygonalLasso = false;
     int wandSampleSize = 1, healingMode = 0;
     CanvasViewOptions view;
     int selectionMode = 0; // Replace, add, subtract, intersect.

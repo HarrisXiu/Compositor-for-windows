@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 2026-10-04 — S1/S3, version remains 0.4.0
+
+- Added polygonal lasso with vertex/closing previews, Backspace, apply/cancel and selection combination modes.
+- Added cancellable background circular expansion/contraction, preserving feathered coverage and explicit empty selections.
+- Added selection-to-mask for layers/folders in canvas coordinates, with undo and project persistence.
+- Added Color Range with replace/add/exclude samples, fuzziness, inversion, background mask/live canvas preview, transactional OK/Cancel and Chinese/Japanese translations.
+- Extended canvas interaction and persistence regression on the AI1 integration baseline; nine CTest suites pass. See [verification](S1-S3_REPORT.md). S2 and AI editing remain separate tasks.
+
 ### 2026-10-04 — AI1 integration, version remains 0.4.0
 
 - Merged AI1's C++ inference/model management with the existing C1–C5 editor, preserving canvas interactions, customizable shortcuts and Chinese/Japanese catalogs.

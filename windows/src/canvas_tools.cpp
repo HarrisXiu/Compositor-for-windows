@@ -9,6 +9,7 @@
 #include <QDropEvent>
 #include <QInputDialog>
 #include <QJsonArray>
+#include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -203,7 +204,21 @@ class SelectionTool : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
     void press(QMouseEvent *e) override {
-        c.dragging_ = true;
+        const bool polygon = c.session().tool == Tool::Lasso && c.session().polygonalLasso;
+        if (polygon && !c.polygonPoints_.isEmpty()) {
+            if (c.polygonPoints_.size() >= 3 &&
+                QLineF(c.start_, c.polygonPoints_.front()).length() * c.zoom <= 6) {
+                finishPolygon();
+                return;
+            }
+            if (c.start_ != c.polygonPoints_.back())
+                c.polygonPoints_.append(c.start_);
+            c.update();
+            return;
+        }
+        c.dragging_ = !polygon;
+        if (polygon)
+            c.polygonPoints_.append(c.start_);
         c.priorSelection_ = c.session().selection;
         c.selectionModifiers_ = e->modifiers();
         if (c.selectionModifiers_ == Qt::NoModifier) {
@@ -219,7 +234,7 @@ class SelectionTool : public CanvasTool {
     }
     void move(QMouseEvent *e) override {
         c.last_ = c.toDocument(e->position());
-        if (c.session().tool == Tool::Lasso)
+        if (c.session().tool == Tool::Lasso && !c.session().polygonalLasso)
             c.lasso_.lineTo(c.last_);
         c.update();
     }
@@ -228,8 +243,52 @@ class SelectionTool : public CanvasTool {
         c.update();
         return;
     }
+    void doubleClick(QMouseEvent *) override { finishPolygon(); }
+    bool keyPress(QKeyEvent *e) override {
+        if (c.polygonPoints_.isEmpty())
+            return false;
+        if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+            finishPolygon();
+            return true;
+        }
+        if (e->key() == Qt::Key_Backspace) {
+            c.polygonPoints_.removeLast();
+            c.update();
+            return true;
+        }
+        return false;
+    }
     void paintOverlay(QPainter &p) override {
-        c.drawGesture(p);
+        if (c.polygonPoints_.isEmpty()) {
+            c.drawGesture(p);
+            return;
+        }
+        QPainterPath path(c.polygonPoints_.front());
+        for (int i = 1; i < c.polygonPoints_.size(); ++i)
+            path.lineTo(c.polygonPoints_[i]);
+        path.lineTo(c.last_);
+        QTransform map;
+        map.translate(c.canvasRect().left(), c.canvasRect().top());
+        map.scale(c.zoom, c.zoom);
+        auto overlay = map.map(path);
+        p.setPen(QPen(Qt::black, 2));
+        p.drawPath(overlay);
+        p.setPen(QPen(Qt::white, 1, Qt::DashLine));
+        p.drawPath(overlay);
+        for (auto point : c.polygonPoints_)
+            p.drawRect(QRectF(map.map(point) - QPointF(2, 2), QSizeF(4, 4)));
+    }
+  private:
+    void finishPolygon() {
+        if (c.polygonPoints_.size() < 3)
+            return;
+        c.lasso_ = QPainterPath(c.polygonPoints_.front());
+        for (int i = 1; i < c.polygonPoints_.size(); ++i)
+            c.lasso_.lineTo(c.polygonPoints_[i]);
+        c.finishSelection();
+        c.polygonPoints_.clear();
+        c.lasso_ = {};
+        c.update();
     }
 };
 class ShapeTool : public CanvasTool {

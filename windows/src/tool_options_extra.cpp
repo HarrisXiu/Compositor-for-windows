@@ -80,6 +80,9 @@ void EditorWindow::buildExtraToolOptions() {
            {Tool::Brush, Tool::Erase});
     boolean("Anti-alias", "selectionAntialiased", &EditorSession::selectionAntialiased,
             {Tool::EllipseSelect, Tool::Lasso});
+    boolean("Polygonal", "polygonalLasso", &EditorSession::polygonalLasso, {Tool::Lasso});
+    findChild<QCheckBox *>("polygonalLasso")->setToolTip(
+        "Click vertices; Enter, double-click, or click the first vertex to close. Backspace removes a vertex; Esc cancels.");
     boolean("Sample All Layers", "wandMerged", &EditorSession::wandMerged, {Tool::Wand});
     auto integer = [this, &add](const QString &label, const QString &name,
                                 int EditorSession::*member, const QStringList &items,
@@ -299,10 +302,12 @@ void EditorWindow::syncExtraToolOptions() {
     for (int i = 0; i < 4; ++i)
         if (s.wandSampleSize == sizes[i])
             combo("wandSampleSize", i);
-    for (auto name : {"selectionAntialiased", "wandMerged"}) {
+    for (auto name : {"selectionAntialiased", "wandMerged", "polygonalLasso"}) {
         auto widget = findChild<QCheckBox *>(name);
         QSignalBlocker blocker(widget);
-        widget->setChecked(QString(name) == "wandMerged" ? s.wandMerged : s.selectionAntialiased);
+        widget->setChecked(QString(name) == "wandMerged" ? s.wandMerged
+                              : QString(name) == "polygonalLasso" ? s.polygonalLasso
+                                                                  : s.selectionAntialiased);
     }
     combo("brushMode", s.tool == Tool::Erase ? 1 : 0);
     combo("smearMode", s.tool == Tool::Smudge ? 1 : s.tool == Tool::Liquify ? 2 : 0);

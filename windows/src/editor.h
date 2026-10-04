@@ -95,6 +95,9 @@ class EditorWindow : public QMainWindow {
     void editText();
     void editShape();
     void addMask();
+    void maskFromSelection();
+    void resizeSelectionDialog(bool expand);
+    void colorRangeDialog();
     void fillSelection(bool erase = false, bool background = false);
     void crop();
     bool canClose(EditorPage *page);

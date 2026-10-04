@@ -5,6 +5,11 @@
 #include "language.h"
 #include "render.h"
 #include "shortcuts.h"
+#include "selection_operations.h"
+#include <QScopeGuard>
+#include <QSpinBox>
+#include <QInputDialog>
+#include <QProgressDialog>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -88,6 +93,339 @@ class CanvasTests : public QObject {
         for (const auto &e : Shortcuts::instance().entries())
             defaults[e.id] = e.original;
         QVERIFY(Shortcuts::instance().save(defaults));
+    }
+    void polygonLassoCommitUndoAndCancel() {
+        EditorPage p(smallDocument());
+        ready(p);
+        p.canvas->setTool(Tool::Lasso);
+        p.session.polygonalLasso = true;
+        p.session.selectionAntialiased = false;
+        for (auto point : {QPoint(10, 10), QPoint(40, 10), QPoint(10, 40)})
+            QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, point.x(), point.y()));
+        QCOMPARE(p.history.count(), 0);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
+        QCOMPARE(p.history.count(), 1);
+        QCOMPARE(p.session.selection.constScanLine(15)[15], uchar(255));
+        QCOMPARE(p.session.selection.constScanLine(45)[45], uchar(0));
+        QVERIFY(!p.isModified());
+        auto result = p.session.selection;
+        p.history.undo();
+        QVERIFY(p.session.selection.isNull());
+        p.history.redo();
+        QCOMPARE(p.session.selection, result);
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 4, 4));
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 20, 4));
+        QTest::keyClick(p.canvas, Qt::Key_Backspace);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
+        QCOMPARE(p.history.count(), 1);
+        QTest::keyClick(p.canvas, Qt::Key_Escape);
+        QCOMPARE(p.session.selection, result);
+        QCOMPARE(p.history.count(), 1);
+    }
+    void polygonLassoCloseAndModes() {
+        EditorPage p(smallDocument());
+        ready(p);
+        p.canvas->setTool(Tool::Lasso);
+        QTest::keyClick(p.canvas, Qt::Key_Tab);
+        QVERIFY(p.session.polygonalLasso);
+        p.session.selectionAntialiased = false;
+        const auto polygon = [&](int x, int mode, bool doubleClick) {
+            p.session.selectionMode = mode;
+            for (auto point : {QPoint(x, 10), QPoint(x + 10, 10), QPoint(x + 10, 30), QPoint(x, 30)})
+                QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, point.x(), point.y()));
+            if (doubleClick)
+                QTest::mouseDClick(p.canvas, Qt::LeftButton, {}, at(p, x, 30));
+            else
+                QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, x, 10));
+        };
+        polygon(10, 0, false);
+        QCOMPARE(p.session.selection.constScanLine(20)[15], uchar(255));
+        polygon(30, 1, true);
+        QCOMPARE(p.session.selection.constScanLine(20)[15], uchar(255));
+        QCOMPARE(p.session.selection.constScanLine(20)[35], uchar(255));
+        polygon(10, 2, false);
+        QCOMPARE(p.session.selection.constScanLine(20)[15], uchar(0));
+        polygon(30, 3, false);
+        QCOMPARE(p.session.selection.constScanLine(20)[35], uchar(255));
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 5, 5));
+        QTest::keyClick(p.canvas, Qt::Key_Tab);
+        QVERIFY(!p.session.polygonalLasso);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
+        QCOMPARE(p.history.count(), 3); // Intersect was identical.
+    }
+    void selectionDiskMorphology() {
+        QImage mask(9, 9, QImage::Format_Grayscale8);
+        mask.fill(0);
+        mask.scanLine(4)[4] = 128;
+        auto disk = resizeSelectionMask(mask, 2, true);
+        QCOMPARE(disk.constScanLine(4)[6], uchar(128));
+        QCOMPARE(disk.constScanLine(5)[5], uchar(128));
+        QCOMPARE(disk.constScanLine(6)[6], uchar(0));
+        auto contracted = resizeSelectionMask(disk, 2, false);
+        QCOMPARE(contracted, mask);
+        mask.fill(255);
+        auto edges = resizeSelectionMask(mask, 2, false);
+        QCOMPARE(edges.constScanLine(0)[4], uchar(0));
+        QCOMPARE(edges.constScanLine(4)[4], uchar(255));
+        QCOMPARE(resizeSelectionMask(mask, 0, false), mask);
+        std::atomic<bool> canceled = true;
+        QVERIFY(resizeSelectionMask(mask, 20, false, &canceled).isNull());
+        auto empty = resizeSelectionMask(mask, 20, false);
+        QCOMPARE(empty.constScanLine(4)[4], uchar(0));
+        QVERIFY_EXCEPTION_THROWN(resizeSelectionMask(mask, -1, true), std::runtime_error);
+    }
+    void selectionMorphologyUndoAndEmpty() {
+        EditorPage p(smallDocument());
+        QImage mask(64, 64, QImage::Format_Grayscale8);
+        mask.fill(0);
+        mask.scanLine(32)[32] = 255;
+        p.session.selection = mask;
+        p.canvas->resizeSelection(3, true);
+        QCOMPARE(p.canvas->selectionBounds(), QRect(29, 29, 7, 7));
+        p.history.undo();
+        QCOMPARE(p.session.selection, mask);
+        p.history.redo();
+        p.canvas->resizeSelection(20, false);
+        QVERIFY(!p.session.selection.isNull()); // Explicitly empty is distinct from deselect.
+        QVERIFY(p.canvas->selectionBounds().isEmpty());
+        QVERIFY(!p.isModified());
+    }
+    void maskFromSelectionPlacementAndUndo() {
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        auto transform = p->document.active()->transform();
+        transform["rotation"] = 90;
+        p->document.active()->metadata["transform"] = transform;
+        QImage mask(64, 64, QImage::Format_Grayscale8);
+        mask.fill(0);
+        for (int y = 10; y < 30; ++y)
+            for (int x = 10; x < 30; ++x)
+                mask.scanLine(y)[x] = 128;
+        p->session.selection = mask;
+        auto a = action(w, "Mask from Selection");
+        QVERIFY(a);
+        a->trigger();
+        QCOMPARE(p->document.active()->mask, mask);
+        QVERIFY(p->isModified());
+        const auto rendered = renderDocument(p->document);
+        QCOMPARE(rendered.pixelColor(15, 15).alpha(), 128);
+        QCOMPARE(rendered.pixelColor(40, 40).alpha(), 0);
+        p->history.undo();
+        QVERIFY(p->document.active()->mask.isNull());
+        QCOMPARE(p->session.selection, mask);
+        QVERIFY(!p->isModified());
+        p->history.redo();
+        QCOMPARE(p->document.active()->mask, mask);
+        QTemporaryDir folder;
+        const auto path = folder.filePath("mask.comp");
+        saveProject(p->document, path);
+        auto loaded = loadProject(path);
+        QCOMPARE(renderDocument(loaded), rendered);
+    }
+    void colorRangePremultipliedAndExclusions() {
+        QImage image(5, 1, QImage::Format_RGBA8888_Premultiplied);
+        image.fill(Qt::transparent);
+        image.setPixelColor(0, 0, QColor(255, 0, 0, 128));
+        image.setPixelColor(1, 0, QColor(250, 5, 0));
+        image.setPixelColor(2, 0, Qt::blue);
+        auto exact = colorRangeMask(image, {Qt::red}, {}, 0, false);
+        QCOMPARE(exact.constScanLine(0)[0], uchar(255));
+        QCOMPARE(exact.constScanLine(0)[1], uchar(0));
+        auto included = colorRangeMask(image, {Qt::red, Qt::blue}, {Qt::blue}, 5, false);
+        QCOMPARE(included.constScanLine(0)[1], uchar(255));
+        QCOMPARE(included.constScanLine(0)[2], uchar(0));
+        QCOMPARE(included.constScanLine(0)[3], uchar(0));
+        auto inverse = colorRangeMask(image, {Qt::red}, {}, 5, true);
+        QCOMPARE(inverse.constScanLine(0)[0], uchar(0));
+        QCOMPARE(inverse.constScanLine(0)[2], uchar(255));
+        QCOMPARE(inverse.constScanLine(0)[3], uchar(255));
+    }
+    void colorRangeDialogCommitAndCancel_data() {
+        QTest::addColumn<bool>("accept");
+        QTest::newRow("accept") << true;
+        QTest::newRow("cancel") << false;
+    }
+    void colorRangeDialogCommitAndCancel() {
+        QFETCH(bool, accept);
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        for (int y = 0; y < 64; ++y)
+            for (int x = 32; x < 64; ++x)
+                p->document.active()->image.setPixelColor(x, y, Qt::blue);
+        p->canvas->refresh();
+        p->canvas->selectAll();
+        auto original = p->session.selection;
+        const auto count = p->history.count();
+        QTimer::singleShot(0, &w, [&] {
+            auto dialog = w.findChild<QDialog *>("colorRangeDialog");
+            QVERIFY(dialog);
+            auto close = qScopeGuard([&] { dialog->reject(); });
+            auto source = dialog->findChild<QWidget *>("colorRangeSource");
+            auto spin = dialog->findChild<QSpinBox *>("colorRangeFuzziness");
+            auto buttons = dialog->findChild<QDialogButtonBox *>();
+            QVERIFY(source && spin && buttons);
+            const int side = std::min(source->width(), source->height());
+            QTest::mouseClick(source, Qt::LeftButton, {},
+                              QPoint(source->width()/2-side/4, source->height()/2));
+            QTRY_VERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+            QCOMPARE(p->session.selection.constScanLine(20)[20], uchar(255));
+            QCOMPARE(p->session.selection.constScanLine(20)[40], uchar(0));
+            QCOMPARE(p->history.count(), count);
+            spin->setValue(10);
+            spin->setValue(20);
+            spin->setValue(0);
+            QTRY_VERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+            close.dismiss();
+            if (accept)
+                buttons->button(QDialogButtonBox::Ok)->click();
+            else
+                dialog->reject();
+        });
+        action(w, "Color Range…")->trigger();
+        QCOMPARE(p->history.count(), count + (accept ? 1 : 0));
+        QVERIFY(!p->isModified());
+        if (accept) {
+            auto result = p->session.selection;
+            p->history.undo();
+            QCOMPARE(p->session.selection, original);
+            p->history.redo();
+            QCOMPARE(p->session.selection, result);
+        } else
+            QCOMPARE(p->session.selection, original);
+    }
+    void colorRangeAddSubtractInvertAndClear() {
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        for (int y = 0; y < 64; ++y)
+            for (int x = 32; x < 64; ++x)
+                p->document.active()->image.setPixelColor(x, y, Qt::blue);
+        p->canvas->refresh();
+        p->canvas->selectAll();
+        const auto original = p->session.selection;
+        const auto count = p->history.count();
+        QTimer::singleShot(0, &w, [&] {
+            auto dialog = w.findChild<QDialog *>("colorRangeDialog");
+            QVERIFY(dialog);
+            auto close = qScopeGuard([&] { dialog->reject(); });
+            auto source = dialog->findChild<QWidget *>("colorRangeSource");
+            auto buttons = dialog->findChild<QDialogButtonBox *>();
+            auto ok = buttons->button(QDialogButtonBox::Ok);
+            auto inverse = dialog->findChild<QCheckBox *>("colorRangeInvert");
+            const int side = std::min(source->width(), source->height());
+            const auto pick = [&](bool blue, Qt::KeyboardModifiers mods) {
+                QTest::mouseClick(source, Qt::LeftButton, mods,
+                                  QPoint(source->width()/2 + (blue ? side/4 : -side/4),
+                                         source->height()/2));
+                QTRY_VERIFY(ok->isEnabled());
+            };
+            pick(false, {});
+            pick(true, Qt::ShiftModifier);
+            QCOMPARE(p->session.selection.constScanLine(20)[20], uchar(255));
+            QCOMPARE(p->session.selection.constScanLine(20)[40], uchar(255));
+            pick(false, Qt::AltModifier);
+            QCOMPARE(p->session.selection.constScanLine(20)[20], uchar(0));
+            QCOMPARE(p->session.selection.constScanLine(20)[40], uchar(255));
+            inverse->setChecked(true);
+            QTRY_VERIFY(ok->isEnabled());
+            QCOMPARE(p->session.selection.constScanLine(20)[20], uchar(255));
+            QCOMPARE(p->session.selection.constScanLine(20)[40], uchar(0));
+            dialog->findChild<QPushButton *>("colorRangeClear")->click();
+            QCOMPARE(p->session.selection, original);
+            QVERIFY(!ok->isEnabled());
+            // Closing with another request pending must never deliver a stale selection.
+            QTest::mouseClick(source, Qt::LeftButton, {},
+                              QPoint(source->width()/2-side/4, source->height()/2));
+            QVERIFY(!ok->isEnabled());
+        });
+        action(w, "Color Range…")->trigger();
+        QTest::qWait(100);
+        QCOMPARE(p->session.selection, original);
+        QCOMPARE(p->history.count(), count);
+    }
+    void selectionDialogLanguages_data() {
+        QTest::addColumn<QString>("language");
+        QTest::newRow("English") << QString("en");
+        QTest::newRow("Chinese") << QString("zh_CN");
+        QTest::newRow("Japanese") << QString("ja_JP");
+    }
+    void selectionDialogLanguages() {
+        QFETCH(QString, language);
+        UiLanguage::instance().setLanguage(language, false);
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        for (int y = 0; y < 64; ++y)
+            for (int x = 32; x < 64; ++x)
+                p->document.active()->image.setPixelColor(x, y, Qt::blue);
+        p->canvas->refresh();
+        QTimer::singleShot(0, &w, [&] {
+            auto dialog = w.findChild<QDialog *>("colorRangeDialog");
+            QVERIFY(dialog);
+            auto close = qScopeGuard([&] { dialog->reject(); });
+            QCOMPARE(dialog->windowTitle(), uiText("Color Range"));
+            QCOMPARE(dialog->findChild<QCheckBox *>("colorRangeInvert")->text(), uiText("Invert"));
+            auto source = dialog->findChild<QWidget *>("colorRangeSource");
+            const int side = std::min(source->width(), source->height());
+            QTest::mouseClick(source, Qt::LeftButton, {},
+                              QPoint(source->width()/2-side/4, source->height()/2));
+            QTRY_VERIFY(dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());
+            if (qEnvironmentVariableIsSet("COMPOSITOR_SELECTION_SCREENSHOTS")) {
+                dialog->grab().save("artifacts/s1-s3-color-range-" + language + ".png");
+                tool(w, Tool::Lasso);
+                w.grab().save("artifacts/s1-s3-editor-" + language + ".png");
+            }
+        });
+        action(w, "Color Range…")->trigger();
+    }
+    void resizeSelectionDialogCancel() {
+        EditorWindow w;
+        auto p = page(w);
+        p->document = Document::create({1024, 1024});
+        p->canvas->refresh();
+        p->canvas->selectAll();
+        const auto original = p->session.selection;
+        const auto count = p->history.count();
+        QTimer::singleShot(0, &w, [&] {
+            auto input = w.findChild<QInputDialog *>();
+            QVERIFY(input);
+            input->setIntValue(200);
+            QTimer::singleShot(0, &w, [&] {
+                auto progress = w.findChild<QProgressDialog *>("resizeSelectionProgress");
+                QVERIFY(progress);
+                progress->cancel();
+                progress->reject();
+            });
+            input->accept();
+        });
+        action(w, "Contract…")->trigger();
+        QTest::qWait(50);
+        QCOMPARE(p->session.selection, original);
+        QCOMPARE(p->history.count(), count);
+        QVERIFY(!p->isModified());
+    }
+    void folderMaskFromSelection() {
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        const auto child = p->document.activeId();
+        const auto folder = p->document.addGroup("Folder");
+        p->document.find(child)->metadata["parentID"] = folder;
+        p->document.metadata["activeLayerID"] = folder;
+        QImage mask(64, 64, QImage::Format_Grayscale8);
+        mask.fill(0);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 32; ++x)
+                mask.scanLine(y)[x] = 255;
+        p->session.selection = mask;
+        action(w, "Mask from Selection")->trigger();
+        auto rendered = renderDocument(p->document);
+        QCOMPARE(rendered.pixelColor(20, 20).alpha(), 255);
+        QCOMPARE(rendered.pixelColor(40, 20).alpha(), 0);
+        p->history.undo();
+        QVERIFY(p->document.find(folder)->mask.isNull());
     }
     void brushKeysAndPalette() {
         EditorPage p(smallDocument());
