@@ -35,13 +35,13 @@ if(MSVC)
 endif()
 
 add_library(compositor_core STATIC
-    windows/src/layer_operations.cpp windows/src/image_operations.cpp
+    windows/src/layer_operations.cpp windows/src/image_operations.cpp windows/src/distort.cpp
     windows/src/document.cpp windows/src/render.cpp windows/src/blend.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
 target_include_directories(compositor_core PUBLIC windows/src)
 target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)
 
 add_library(compositor_ui STATIC
-    windows/src/shortcuts.cpp windows/src/shortcuts.h windows/src/canvas_layout.cpp windows/src/canvas_interaction.cpp windows/src/editor_view.cpp windows/src/tool_options_extra.cpp
+    windows/src/shortcuts.cpp windows/src/shortcuts.h windows/src/canvas_layout.cpp windows/src/canvas_interaction.cpp windows/src/canvas_transform.cpp windows/src/editor_view.cpp windows/src/tool_options_extra.cpp
     windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp
     windows/src/editor_menus.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
     windows/src/editor_layers.cpp windows/src/layer_transfer.cpp windows/src/image_dialogs.cpp windows/src/crop_tool.cpp
@@ -108,10 +108,17 @@ if(BUILD_TESTING)
     if(MSVC)
         target_compile_options(compositor_canvas_tests PRIVATE /utf-8)
     endif()
+    qt_add_executable(compositor_transform_tests windows/tests/transform_tests.cpp)
+    target_link_libraries(compositor_transform_tests PRIVATE compositor_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(compositor_transform_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME compositor_transform COMMAND compositor_transform_tests)
+    set_tests_properties(compositor_transform PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME compositor_canvas COMMAND compositor_canvas_tests)
     set_tests_properties(compositor_canvas PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        foreach(target compositor_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests)
+        foreach(target compositor_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests)
             foreach(library Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Test LibRaw)
                 add_custom_command(TARGET ${target} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:${target}>")

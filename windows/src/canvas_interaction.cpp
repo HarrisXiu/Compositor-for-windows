@@ -2,6 +2,7 @@
 #include "canvas.h"
 #include "canvas_layout.h"
 #include "canvas_tools.h"
+#include "distort.h"
 #include "layer_operations.h"
 #include "render.h"
 #include "shortcuts.h"
@@ -14,21 +15,6 @@
 #include <cmath>
 
 namespace compositor {
-namespace {
-QRectF bounds(const Layer &l) {
-    auto t = l.transform();
-    auto p = t.value("origin").toArray(), s = t.value("size").toArray();
-    return {p[0].toDouble(), p[1].toDouble(), s[0].toDouble(), s[1].toDouble()};
-}
-QTransform rotation(const Layer &l) {
-    QTransform t;
-    auto c = bounds(l).center();
-    t.translate(c.x(), c.y());
-    t.rotate(l.transform().value("rotation").toDouble());
-    t.translate(-c.x(), -c.y());
-    return t;
-}
-} // namespace
 bool Canvas::brushTool() const {
     auto t = session_->tool;
     return t == Tool::Brush || t == Tool::Erase || t == Tool::Clone || t == Tool::Heal ||
@@ -393,20 +379,6 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
     }
     return false;
 }
-QVector<QPointF> Canvas::transformPoints(const Layer &layer) const {
-    const auto b = bounds(layer), r = canvasRect();
-    auto t = rotation(layer);
-    QVector<QPointF> points{
-        b.topLeft(),     {b.center().x(), b.top()},    b.topRight(),   {b.right(), b.center().y()},
-        b.bottomRight(), {b.center().x(), b.bottom()}, b.bottomLeft(), {b.left(), b.center().y()}};
-    for (auto &p : points)
-        p = r.topLeft() + t.map(p) * zoom;
-    auto top = (points[0] + points[2]) / 2, center = r.topLeft() + t.map(b.center()) * zoom;
-    auto delta = top - center;
-    double length = std::hypot(delta.x(), delta.y());
-    points << top + delta * (24 / std::max(1.0, length));
-    return points;
-}
 bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     if (temporaryPan_ || temporaryPicker_)
         return false;
@@ -443,25 +415,22 @@ bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     }
     if (session_->view.rulers && (e->position().x() < 24 || e->position().y() < 24))
         return true;
-    if (session_->tool == Tool::Move && session_->view.transformControls)
-        if (auto l = document_->active(); l && !l->group()) {
-            auto target = transformTarget(*l);
-            auto points = transformPoints(target);
-            const double hitRadius = std::min(
-                7.0, std::max(1.5, std::min(bounds(target).width(), bounds(target).height()) *
-                                       zoom * .2));
+    if (session_->tool == Tool::Move && session_->view.transformControls) {
+        const auto subject = transformSubject();
+        if (subject.kind != TransformSubject::Kind::None) {
+            const auto points = handlePoints(transformCorners(subject.box), true);
+            const auto size = subject.box.value("size").toArray();
+            const double hitRadius =
+                std::min(7.0, std::max(1.5, std::min(size.at(0).toDouble(), size.at(1).toDouble()) *
+                                                zoom * .2));
             for (int i = 0; i < points.size(); ++i)
                 if (QLineF(points[i], e->position()).length() <= (i == 8 ? 7 : hitRadius)) {
-                    const auto id = l->id();
-                    transformBefore_ = *l;
-                    emit editStarted();
-                    transformBounds_ = bounds(target);
-                    transformHandle_ = i;
-                    dragging_ = true;
-                    beginLayerEdit(id);
+                    // Ctrl-dragging a handle distorts: the box's corners move freely.
+                    beginTransform(subject, i, e->modifiers() & Qt::ControlModifier);
                     return true;
                 }
         }
+    }
     return false;
 }
 bool Canvas::moveOverlayEdit(QMouseEvent *e) {
@@ -488,86 +457,16 @@ bool Canvas::moveOverlayEdit(QMouseEvent *e) {
     }
     if (transformHandle_ < 0)
         return false;
-    auto l = document_->find(transformBefore_.id());
-    if (!l)
+    const auto point = toDocument(e->position());
+    if (distorting_) {
+        updateDistort(point, e->modifiers());
+        applyDistortion(1280);
         return true;
-    auto point = toDocument(e->position());
-    const auto b = transformBounds_;
-    auto target = transformTarget(transformBefore_);
-    if (transformHandle_ == 8) {
-        auto a = point - b.center(), origin = start_ - b.center();
-        double angle = (std::atan2(a.y(), a.x()) - std::atan2(origin.y(), origin.x())) * 180 /
-                           3.141592653589793 +
-                       target.transform()["rotation"].toDouble();
-        if (e->modifiers() & Qt::ShiftModifier)
-            angle = std::round(angle / 15) * 15;
-        auto t = target.transform();
-        t["rotation"] = angle;
-        target.metadata["transform"] = t;
-    } else {
-        point = rotation(target).inverted().map(point);
-        QRectF next = b;
-        const bool left = transformHandle_ == 0 || transformHandle_ == 6 || transformHandle_ == 7;
-        const bool right = transformHandle_ == 2 || transformHandle_ == 3 || transformHandle_ == 4;
-        const bool top = transformHandle_ <= 2,
-                   bottom = transformHandle_ >= 4 && transformHandle_ <= 6;
-        const bool centered = e->modifiers() & Qt::AltModifier;
-        if (std::abs(target.transform()["rotation"].toDouble()) < .001) {
-            if (left || right)
-                point.setX(snapValue(point.x(), false, e->modifiers(), {l->id()}));
-            if (top || bottom)
-                point.setY(snapValue(point.y(), true, e->modifiers(), {l->id()}));
-        }
-        if (left)
-            next.setLeft(point.x());
-        if (right)
-            next.setRight(point.x());
-        if (top)
-            next.setTop(point.y());
-        if (bottom)
-            next.setBottom(point.y());
-        if (centered) {
-            const double halfWidth =
-                (left || right) ? std::abs(point.x() - b.center().x()) : b.width() / 2;
-            const double halfHeight =
-                (top || bottom) ? std::abs(point.y() - b.center().y()) : b.height() / 2;
-            next = QRectF(b.center() - QPointF(halfWidth, halfHeight),
-                          QSizeF(halfWidth * 2, halfHeight * 2));
-        }
-        if (e->modifiers() & Qt::ShiftModifier) {
-            const double ratio = b.width() / b.height();
-            double width = std::abs(next.width()), height = std::abs(next.height());
-            if (!(top || bottom) || ((left || right) && std::abs(width / b.width() - 1) >
-                                                            std::abs(height / b.height() - 1)))
-                height = width / ratio;
-            else
-                width = height * ratio;
-            const QPointF anchor(centered ? b.center().x()
-                                 : left   ? b.right()
-                                          : b.left(),
-                                 centered ? b.center().y()
-                                 : top    ? b.bottom()
-                                          : b.top());
-            next = QRectF(anchor - QPointF(centered ? width / 2
-                                           : left   ? width
-                                                    : 0,
-                                           centered ? height / 2
-                                           : top    ? height
-                                                    : 0),
-                          QSizeF(width, height));
-        }
-        next = next.normalized();
-        if (next.width() < 1 || next.height() < 1)
-            return true;
-        auto center = rotation(target).map(next.center());
-        next.moveCenter(center);
-        target.setBounds(next);
     }
-    l->metadata = transformBefore_.metadata;
-    l->metadata[paintMask() && !l->mask.isNull() ? "maskPlacement" : "transform"] =
-        target.transform();
-    emit edited();
-    refresh();
+    const auto draft = draftTransform(transformSubject_.box, transformHandle_, point,
+                                      e->modifiers(), transformSubject_.ids);
+    if (!draft.isEmpty())
+        applyTransform(draft);
     return true;
 }
 bool Canvas::finishOverlayEdit(QMouseEvent *e) {
@@ -589,9 +488,24 @@ bool Canvas::finishOverlayEdit(QMouseEvent *e) {
         return true;
     }
     if (transformHandle_ >= 0) {
-        moveOverlayEdit(e);
-        transformHandle_ = -1;
-        emit editFinished("Transform Layer");
+        QString label = transformSubject_.kind == TransformSubject::Kind::Group
+                            ? "Transform Layers"
+                            : "Transform Layer";
+        if (distorting_) {
+            updateDistort(toDocument(e->position()), e->modifiers());
+            // A handle let go where it was grabbed distorts nothing.
+            if (distortCorners_ == distortStart_) {
+                endTransform();
+                emit editCanceled();
+                return true;
+            }
+            applyDistortion(0);
+            label = transformSubject_.kind == TransformSubject::Kind::Group ? "Distort Layers"
+                                                                           : "Distort";
+        } else
+            moveOverlayEdit(e);
+        endTransform();
+        emit editFinished(label);
         return true;
     }
     return false;
@@ -626,18 +540,7 @@ void Canvas::drawCanvasOverlay(QPainter &p) {
         }
         p.restore();
     }
-    if (session_->tool == Tool::Move && o.transformControls)
-        if (auto l = document_->active(); l && !l->group()) {
-            auto points = transformPoints(transformTarget(*l));
-            p.setPen(QPen(QColor(75, 180, 255), 1));
-            p.setBrush(Qt::NoBrush);
-            p.drawPolygon(QPolygonF{points[0], points[2], points[4], points[6]});
-            p.drawLine(points[1], points[8]);
-            p.setBrush(Qt::white);
-            for (int i = 0; i < 8; ++i)
-                p.drawRect(QRectF(points[i] - QPointF(3, 3), QSizeF(6, 6)));
-            p.drawEllipse(points[8], 4, 4);
-        }
+    drawTransformControls(p);
     if (hovered_ && !temporaryPan_) {
         if (brushTool() && !temporaryPicker_) {
             auto radius = session_->brushSize * zoom / 2;

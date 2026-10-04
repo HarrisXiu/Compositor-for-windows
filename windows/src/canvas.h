@@ -151,8 +151,21 @@ class Canvas : public QWidget {
     QColor hoverColor_ = Qt::transparent;
     int antsPhase_ = 0, guideDrag_ = -1, transformHandle_ = -1, opacityDigit_ = -1;
     QElapsedTimer opacityClock_;
-    Layer transformBefore_;
-    QRectF transformBounds_;
+    // What a transform handle or the Move tool edits: one layer, its mask alone, or several
+    // layers (selected ones and the contents of selected folders) moved as one box.
+    struct TransformSubject {
+        enum class Kind { None, Layer, Mask, Group } kind = Kind::None;
+        QStringList ids;
+        QJsonObject box; // The transform the handles are drawn on: the layer's, mask's or group's.
+    };
+    // The gesture in progress: what each edited layer was when it began, the box as the handles
+    // have drawn it since, and, while distorting, the box's four corners.
+    TransformSubject transformSubject_;
+    QHash<QString, Layer> transformOriginals_;
+    QJsonObject transformDraft_;
+    QVector<QPointF> distortStart_, distortCorners_;
+    QRectF moveFrame_;
+    bool distorting_ = false, duplicating_ = false;
     QImage cloneSample_;
     bool cloneStrokeReady_ = false;
     QPointF lastBrushPoint_;
@@ -171,8 +184,21 @@ class Canvas : public QWidget {
     bool beginOverlayEdit(QMouseEvent *event);
     bool moveOverlayEdit(QMouseEvent *event);
     bool finishOverlayEdit(QMouseEvent *event);
-    QVector<QPointF> transformPoints(const Layer &layer) const;
     Layer transformTarget(const Layer &layer) const;
+    TransformSubject transformSubject() const;
+    QVector<QPointF> handlePoints(const QVector<QPointF> &corners, bool rotation) const;
+    void beginTransform(const TransformSubject &subject, int handle, bool distort);
+    QJsonObject draftTransform(const QJsonObject &box, int handle, QPointF point,
+                               Qt::KeyboardModifiers modifiers, const QStringList &ids) const;
+    void applyTransform(const QJsonObject &draft);
+    void updateDistort(QPointF point, Qt::KeyboardModifiers modifiers);
+    void applyDistortion(double limit);
+    void endTransform();
+    void drawTransformControls(QPainter &painter);
+    // The Move tool's drag: the selected layers, a folder's contents with it, or a mask alone.
+    void beginMove(bool duplicate);
+    void moveBy(QPointF delta, Qt::KeyboardModifiers modifiers);
+    void finishMove();
     void selectLayerAt(QPointF point, bool extend);
     bool handleCanvasKey(QKeyEvent *event);
     void nudge(QPointF delta, bool pixels);

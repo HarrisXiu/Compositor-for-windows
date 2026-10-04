@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 2026-10-04 — T1/T2, version remains 0.4.0
+
+- Added Ctrl-drag free distortion of a layer or a group: the box's corners move freely and the pixels (and a linked mask) are resampled in perspective, or as two triangles for a folded shape, as one undo step.
+- Selected layers and the contents of selected folders now scale, rotate and distort together in one box; the Move tool drags every selected layer and a folder's contents; Alt-drag duplicates the selection and drags the copies. Linked masks placed apart follow resizing.
+- Added `compositor_transform_tests` (20 tests). Combined Release regression: eight suites, 258 passed, 0 failed, 2 optional benchmarks skipped.
+
 ### 2026-10-03 — version remains 0.4.0
 
 - Completed the L1–L4 layer/canvas scope: thumbnails, multi-selection, merge/group/order operations, cross-project subtree copy, editable crop, canvas/image size, trim and flips.

@@ -317,7 +317,7 @@ void Canvas::cancelInteraction() {
         return;
     dragging_ = false;
     guideDrag_ = -1;
-    transformHandle_ = -1;
+    endTransform();
     if (session_->tool == Tool::Crop && !temporaryPan_)
         session_->cropFrame = session_->cropBeforeGesture;
     warp_.reset();

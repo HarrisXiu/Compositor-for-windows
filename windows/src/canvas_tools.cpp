@@ -149,54 +149,17 @@ class MoveTool final : public CanvasTool {
         if (c.session().autoSelect)
             c.selectLayerAt(c.start_, e->modifiers() & Qt::ShiftModifier);
         require(c.document_->active(), "Select a layer first");
-        c.transformBefore_ = *c.document_->active();
-
         emit c.editStarted();
-        c.beginLayerEdit(c.document_->activeId());
+        c.beginMove(e->modifiers() & Qt::AltModifier);
         c.dragging_ = true;
-        return;
     }
     void move(QMouseEvent *e) override {
         auto point = c.toDocument(e->position());
-
-        auto layer = c.document_->active();
-        if (layer) {
-            auto delta = point - c.start_;
-            if (e->modifiers() & Qt::ShiftModifier) {
-                if (std::abs(delta.x()) > std::abs(delta.y()))
-                    delta.setY(0);
-                else
-                    delta.setX(0);
-            }
-            auto target = c.transformTarget(c.transformBefore_);
-            const auto source = target.image.isNull() ? QSize(1, 1) : target.image.size();
-            if (!(e->modifiers() & Qt::ControlModifier)) {
-                auto frame =
-                    target.placement(source).mapRect(QRectF(QPointF(), source)).translated(delta);
-                auto adjustment =
-                    snapBounds(*c.document_, c.session().view, frame, c.zoom, {layer->id()});
-                if (e->modifiers() & Qt::ShiftModifier) {
-                    if (delta.x() == 0)
-                        adjustment.setX(0);
-                    else
-                        adjustment.setY(0);
-                }
-                delta += adjustment;
-            }
-            layer->metadata = c.transformBefore_.metadata;
-            if (c.paintMask() && !layer->mask.isNull()) {
-                target.move(delta);
-                layer->metadata["maskPlacement"] = target.transform();
-            } else
-                layer->move(delta);
-            emit c.edited();
-            c.refresh();
-        }
-
+        c.moveBy(point - c.start_, e->modifiers());
         c.last_ = point;
     }
     void release(QMouseEvent *) override {
-        emit c.editFinished("Move Layer");
+        c.finishMove();
     }
 };
 class SelectionTool : public CanvasTool {
