@@ -24,6 +24,7 @@ class EyedropperTool;
 class WandTool;
 class TextTool;
 class CropTool;
+class CanvasTextEditor;
 class Canvas : public QWidget {
     Q_OBJECT
   public:
@@ -58,6 +59,9 @@ class Canvas : public QWidget {
     void replaceSelection(const QImage &mask, const QString &label);
     void featherSelection(double radius);
     void cancelInteraction();
+    void beginTextEditing(const QString &id = {}, QRectF bounds = {});
+    void finishTextEditing(bool apply = true);
+    bool textEditing() const { return textEditor_ != nullptr; }
     void applyCropFrame();
     void cancelCropFrame();
     QRect selectionBounds() const;
@@ -99,9 +103,17 @@ class Canvas : public QWidget {
     void keyReleaseEvent(QKeyEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
     void leaveEvent(QEvent *) override;
+    void hideEvent(QHideEvent *) override;
 
   private:
     Document *document_;
+    CanvasTextEditor *textEditor_ = nullptr;
+    QString textLayerID_;
+    Layer textBefore_, textFrameBefore_;
+    bool textNew_ = false;
+    QString textLayerAt(QPointF point) const;
+    void updateTextEditing(bool force = false);
+    void syncTextEditor();
     EditorSession fallbackSession_;
     EditorSession *session_;
     std::unique_ptr<CanvasTool> controller_;

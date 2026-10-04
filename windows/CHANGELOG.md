@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### 2026-10-04 — X1/X2, version remains 0.4.0
+
+- Added native canvas text input with IME composition, UTF-16 rich font/color ranges, transformed paragraph-frame move/resize/reflow, Ctrl+Enter Apply and Escape cancellation. Pending text commits on tool/layer/tab changes, other edits, Save and Export; each edit is one document undo step.
+- Added an inline typography toolbar and persistent Windows font mappings. Automatic substitutions cover common Mac/PostScript names; document font names and unedited PNG fallbacks remain intact.
+- Basic shape layer and group/numeric resizing now redraws rectangle/rounded-rectangle/ellipse/line sources at the new dimensions, retaining corner radius, stroke width and mask placement.
+- Added 22 text/shape regression cases (24 QtTest checks pass in offscreen and Windows modes); all eleven Release CTest suites pass. Extended self-test delivery to include transform and text/shape suites. See [X1/X2 delivery notes](X1-X2_REPORT.md). No release ZIP was generated.
+
 ### 2026-10-04 — P1–P3, version remains 0.4.0
 
 - Completed growing paint/mask surfaces with preserved affine placement, implicit mask coverage, stroke opacity, selection clipping, undo and cancellation. Materialized small masks into editable grids.

@@ -103,6 +103,10 @@ EditorPage::EditorPage(Document source, QWidget *parent)
             });
     connect(&history, &QUndoStack::cleanChanged, this, [this] { emit documentChanged(); });
 }
+EditorPage::~EditorPage() {
+    // Finish while the document/history still exist, before QWidget hides its children.
+    canvas->finishTextEditing(false);
+}
 void EditorPage::changed() {
     QSet<QString> valid;
     for (const auto &layer : document.layers)
@@ -146,6 +150,7 @@ void EditorPage::record(const QString &label, const Document &before, const Docu
     }
 }
 void EditorPage::edit(const QString &label, const std::function<void(Document &)> &operation) {
+    canvas->finishTextEditing(true);
     canvas->cancelInteraction();
     auto before = document;
     auto selection = session.selection;

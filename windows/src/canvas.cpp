@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "canvas.h"
 #include "canvas_tools.h"
+#include "canvas_text_editor.h"
 #include "editable_layers.h"
 #include "filters.h"
 #include "render.h"
@@ -101,6 +102,14 @@ Canvas::Canvas(Document *document, EditorSession *session, QWidget *parent)
     connect(&batchWatcher_, &QFutureWatcherBase::finished, this, &Canvas::finishBatch);
 }
 Canvas::~Canvas() {
+    if (textEditor_) {
+        textEditor_->changed = {};
+        textEditor_->fontsChanged = {};
+        textEditor_->apply = {};
+        textEditor_->cancel = {};
+        textEditor_->frameStarted = {};
+        textEditor_->frameChanged = {};
+    }
     if (batch_) {
         batch_->canceled = true;
         batchFuture_.waitForFinished();
@@ -277,6 +286,7 @@ void Canvas::fit() {
 }
 void Canvas::setTool(Tool value) {
     if (value != session_->tool) {
+        finishTextEditing(true);
         cancelInteraction();
         session_->cropFrame = {};
         if (value == Tool::Crop && !session_->selection.isNull())
@@ -307,13 +317,26 @@ void Canvas::cancelCropFrame() {
     update();
 }
 void Canvas::mouseDoubleClickEvent(QMouseEvent *event) {
-    if (session_->tool == Tool::Crop && event->button() == Qt::LeftButton) {
+    if ((session_->tool == Tool::Text || session_->tool == Tool::Move) &&
+        event->button() == Qt::LeftButton && !textLayerAt(toDocument(event->position())).isEmpty()) {
+        const auto id = textLayerAt(toDocument(event->position()));
+        try {
+            finishTextEditing(true);
+            cancelInteraction();
+            beginTextEditing(id);
+        } catch (const std::exception &error) {
+            cancelInteraction();
+            emit this->error(QString::fromUtf8(error.what()));
+        }
+        event->accept();
+    } else if (session_->tool == Tool::Crop && event->button() == Qt::LeftButton) {
         applyCropFrame();
         event->accept();
     } else
         QWidget::mouseDoubleClickEvent(event);
 }
 void Canvas::cancelInteraction() {
+    finishTextEditing(false);
     if (!dragging_)
         return;
     dragging_ = false;
@@ -405,6 +428,7 @@ QImage Canvas::selectionForLayer(const Layer &layer) const {
     return layerSelection(*document_, layer, session_->selection);
 }
 void Canvas::paintEvent(QPaintEvent *) {
+    syncTextEditor();
     QPainter p(this);
     p.fillRect(rect(), QColor(29, 31, 36));
     auto r = canvasRect();
@@ -501,6 +525,10 @@ void Canvas::paintEvent(QPaintEvent *) {
 // least as many pixels as the screen shows, so drawing only shrinks a level by up to half, or
 // enlarges full size pixel for pixel. Only tiles that are on screen are rendered.
 void Canvas::drawDocument(QPainter &p, const QRectF &target) {
+    Document display = *document_;
+    if (textEditor_)
+        if (auto layer = display.find(textLayerID_))
+            layer->metadata["isVisible"] = false;
     const auto doc = document_->size();
     const QRectF shown = target.intersected(QRectF(rect()));
     if (doc.isEmpty() || shown.isEmpty())
@@ -546,7 +574,7 @@ void Canvas::drawDocument(QPainter &p, const QRectF &target) {
                 batch_->canceled = true;
         } else {
             auto batch = std::make_shared<RenderBatch>();
-            batch->document = *document_;
+            batch->document = display;
             batch->full = full;
             batch->generation = generation_;
             batch->jobs = std::move(jobs);
@@ -574,21 +602,21 @@ void Canvas::drawDocument(QPainter &p, const QRectF &target) {
     if (!jobs.empty()) {
         QString failure;
         try {
-            prepareRender(*document_, full, true);
+            prepareRender(display, full, true);
         } catch (const std::exception &e) {
             failure = QString::fromUtf8(e.what());
         }
-        QtConcurrent::blockingMap(jobs, [this](TileJob &job) {
+        QtConcurrent::blockingMap(jobs, [this, &display](TileJob &job) {
             try {
                 if (editedLayer_.isEmpty()) {
-                    job.image = renderArea(*document_, job.area);
+                    job.image = renderArea(display, job.area);
                     return;
                 }
                 if (job.backdrop.isNull()) {
-                    job.backdrop = renderBackdrop(*document_, job.area, editedLayer_);
+                    job.backdrop = renderBackdrop(display, job.area, editedLayer_);
                     job.newBackdrop = true;
                 }
-                job.image = renderOver(*document_, job.area, editedLayer_, job.backdrop);
+                job.image = renderOver(display, job.area, editedLayer_, job.backdrop);
             } catch (const std::exception &e) {
                 job.error = QString::fromUtf8(e.what());
             }
@@ -719,7 +747,8 @@ void Canvas::drawGesture(QPainter &p) {
     if (dragging_ && (session_->tool == Tool::RectangleSelect ||
                       session_->tool == Tool::EllipseSelect || session_->tool == Tool::Crop ||
                       session_->tool == Tool::Rectangle || session_->tool == Tool::Ellipse ||
-                      session_->tool == Tool::Line || session_->tool == Tool::Gradient)) {
+                      session_->tool == Tool::Line || session_->tool == Tool::Gradient ||
+                      session_->tool == Tool::Text)) {
         QRectF outline(r.topLeft() + start_ * zoom, r.topLeft() + last_ * zoom);
         p.setPen(QPen(Qt::white, 1, Qt::DashLine));
         if (session_->tool == Tool::EllipseSelect || session_->tool == Tool::Ellipse)
@@ -882,6 +911,7 @@ void Canvas::finishSelection() {
 void Canvas::mousePressEvent(QMouseEvent *e) {
     if (e->button() != Qt::LeftButton || dragging_)
         return;
+    finishTextEditing(true);
     setFocus();
     start_ = last_ = toDocument(e->position());
     hover_ = e->position();
@@ -983,7 +1013,9 @@ void Canvas::keyReleaseEvent(QKeyEvent *e) {
     }
 }
 void Canvas::focusOutEvent(QFocusEvent *e) {
-    cancelInteraction();
+    // Native inline input and its toolbar/dialogs take focus from the canvas.
+    if (!textEditor_)
+        cancelInteraction();
     temporaryPan_ = false;
     setCursor(session_->tool == Tool::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
     QWidget::focusOutEvent(e);

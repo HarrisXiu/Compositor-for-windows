@@ -187,7 +187,15 @@ void EditorWindow::buildExtraToolOptions() {
     number("Leading", "textLeading", &EditorSession::textLeading, 0, 5000, {Tool::Text});
     auto editTextButton = new QPushButton("Edit Text");
     add({}, editTextButton, {Tool::Text});
-    connect(editTextButton, &QPushButton::clicked, this, [this] { editText(); });
+    connect(editTextButton, &QPushButton::clicked, this, [this] {
+        if (!page())
+            return;
+        try {
+            page()->canvas->beginTextEditing(page()->document.activeId());
+        } catch (const std::exception &error) {
+            showError(QString::fromUtf8(error.what()));
+        }
+    });
     pickerSize_ = new QComboBox;
     pickerSize_->setObjectName("pickerSize");
     pickerSize_->addItems({"Point sample", "3 × 3 average", "5 × 5 average", "11 × 11 average"});

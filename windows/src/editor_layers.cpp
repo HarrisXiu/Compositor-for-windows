@@ -72,6 +72,7 @@ void EditorWindow::deleteSelectedLayers() {
 void EditorWindow::copySelectedLayers() {
     auto p = page();
     require(p && !selectedLayers().isEmpty(), "Select layers to copy");
+    p->canvas->finishTextEditing(true);
     p->canvas->cancelInteraction();
     auto mime = new LayerTransferMimeData(p->document, selectedLayers());
     QApplication::clipboard()->setMimeData(mime);

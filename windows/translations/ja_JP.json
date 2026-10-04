@@ -649,5 +649,13 @@
   "Paint surface transform is not invertible": "描画対象の変換を反転できません",
   "Not enough memory to expand paint surface": "描画範囲を拡張するためのメモリが不足しています",
   "Not enough memory for paint mask": "描画マスクを準備するためのメモリが不足しています",
-  "Not enough memory for expanded stroke": "ストロークを拡張するためのメモリが不足しています"
+  "Not enough memory for expanded stroke": "ストロークを拡張するためのメモリが不足しています",
+  "Font Mapping": "フォント対応",
+  "Document font": "文書のフォント",
+  "Windows font": "Windows フォント",
+  "Text color": "文字の色",
+  "Apply text (Ctrl+Enter)": "文字を適用（Ctrl+Enter）",
+  "Cancel text (Escape)": "文字の編集をキャンセル（Escape）",
+  "Text box exceeds size limit": "テキスト枠がサイズ制限を超えています",
+  "Shape exceeds size limit": "シェイプがサイズ制限を超えています"
 }

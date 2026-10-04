@@ -111,28 +111,30 @@ class TextTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
     void press(QMouseEvent *) override {
-        bool ok = false;
-        auto text = QInputDialog::getMultiLineText(&c, "Text Layer", "Text", {}, &ok);
-        if (!ok || text.isEmpty())
+        auto id = c.textLayerAt(c.start_);
+        if (!id.isEmpty()) {
+            c.beginTextEditing(id);
             return;
-        emit c.editStarted();
-        QJsonObject style{{"content", text},
-                          {"fontName", c.session().textFont},
-                          {"fontSize", c.session().textSize},
-                          {"red", c.session().foreground.redF()},
-                          {"green", c.session().foreground.greenF()},
-                          {"blue", c.session().foreground.blueF()},
-                          {"alignment", c.session().textAlignment},
-                          {"tracking", c.session().textTracking},
-                          {"leading", c.session().textLeading}};
-        auto image = renderText(style);
-        auto id = c.document_->addImage(text.left(30), image);
-        auto l = c.document_->find(id);
-        l->move(c.start_);
-        l->metadata["text"] = style;
-        emit c.editFinished("Text Layer");
-        c.refresh();
-        return;
+        }
+        c.finishTextEditing(true);
+        c.dragging_ = true;
+    }
+    void move(QMouseEvent *event) override {
+        c.last_ = c.toDocument(event->position());
+        if (event->modifiers() & Qt::ShiftModifier) {
+            auto delta = c.last_ - c.start_;
+            auto side = std::max(std::abs(delta.x()), std::abs(delta.y()));
+            c.last_ = c.start_ + QPointF(delta.x() < 0 ? -side : side, delta.y() < 0 ? -side : side);
+        }
+        c.update();
+    }
+    void release(QMouseEvent *event) override {
+        move(event);
+        c.dragging_ = false;
+        c.beginTextEditing({}, QRectF(c.start_, c.last_).normalized());
+    }
+    void paintOverlay(QPainter &painter) override {
+        c.drawGesture(painter);
     }
 };
 class SelectTool final : public CanvasTool {

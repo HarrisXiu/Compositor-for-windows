@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "editable_layers.h"
 #include "document.h"
+#include "text_fonts.h"
 #include <QAbstractTextDocumentLayout>
 #include <QJsonArray>
 #include <QPainter>
@@ -23,7 +24,8 @@ void loadTextDocument(QTextDocument &document, const QJsonObject &style) {
     require(content.size() <= 100000, "Text exceeds limit");
     auto size = number(style, "fontSize", 72);
     require(std::isfinite(size) && size >= 1 && size <= 2000, "Invalid text font size");
-    QFont font(style.value("fontName").toString("Segoe UI"));
+    const auto requested = style.value("fontName").toString("Segoe UI");
+    QFont font(resolvedTextFont(requested));
     font.setPixelSize(int(std::lround(size)));
     font.setLetterSpacing(QFont::AbsoluteSpacing, number(style, "tracking"));
     document.setDefaultFont(font);
@@ -33,6 +35,7 @@ void loadTextDocument(QTextDocument &document, const QJsonObject &style) {
     cursor.select(QTextCursor::Document);
     QTextCharFormat format;
     format.setFont(font);
+    format.setProperty(RequestedFontProperty, requested);
     format.setForeground(color(style));
     cursor.mergeCharFormat(format);
     QTextBlockFormat block;
@@ -63,14 +66,22 @@ void loadTextDocument(QTextDocument &document, const QJsonObject &style) {
         cursor.setPosition(start + length, QTextCursor::KeepAnchor);
         QTextCharFormat f;
         auto face = font;
-        face.setFamily(run.value("fontName").toString());
+        const auto requestedFace = run.value("fontName").toString();
+        face.setFamily(resolvedTextFont(requestedFace));
         f.setFont(face);
+        f.setProperty(RequestedFontProperty, requestedFace);
         cursor.mergeCharFormat(f);
     }
     auto box = style.value("boxSize").toArray();
-    if (box.size() == 2)
+    if (box.size() == 2) {
+        require(box[0].isDouble() && box[1].isDouble() &&
+                    std::isfinite(box[0].toDouble()) && std::isfinite(box[1].toDouble()) &&
+                    box[0].toDouble() >= 1 && box[1].toDouble() >= 1 &&
+                    box[0].toDouble() <= MaxSide && box[1].toDouble() <= MaxSide &&
+                    box[0].toDouble() * box[1].toDouble() <= MaxSurfacePixels,
+                "Text box exceeds size limit");
         document.setTextWidth(box[0].toDouble());
-    else
+    } else
         document.setTextWidth(-1);
 }
 QJsonObject textStyleFromDocument(const QTextDocument &document, const QJsonObject &base) {
@@ -94,7 +105,9 @@ QJsonObject textStyleFromDocument(const QTextDocument &document, const QJsonObje
                                           {"red", c.redF()},
                                           {"green", c.greenF()},
                                           {"blue", c.blueF()}});
-            auto family = format.font().family();
+            auto family = format.property(RequestedFontProperty).toString();
+            if (family.isEmpty())
+                family = format.font().family();
             if (!family.isEmpty() && family != baseFont)
                 fonts.append(
                     QJsonObject{{"location", start}, {"length", length}, {"fontName", family}});

@@ -2,6 +2,7 @@
 #include "editable_layers.h"
 #include "editor.h"
 #include "language.h"
+#include "text_fonts.h"
 #include <QAbstractTextDocumentLayout>
 #include <QCheckBox>
 #include <QColorDialog>
@@ -24,6 +25,7 @@ void EditorWindow::editText() {
     auto p = page();
     if (!p)
         return;
+    p->canvas->finishTextEditing(true);
     auto layer = p->document.active();
     require(layer && layer->metadata.value("text").isObject(), "Select an editable text layer");
     auto style = layer->metadata.value("text").toObject();
@@ -37,7 +39,7 @@ void EditorWindow::editText() {
     loadTextDocument(*text->document(), style);
     layout->addWidget(text, 1);
     auto font = new QFontComboBox;
-    font->setCurrentFont(QFont(style.value("fontName").toString()));
+    font->setCurrentFont(QFont(resolvedTextFont(style.value("fontName").toString())));
     form->addRow("Font (selection or all)", font);
     auto changeAll = [&](const QTextCharFormat &format) {
         auto cursor = text->textCursor();
@@ -51,6 +53,7 @@ void EditorWindow::editText() {
             style["fontName"] = face.family();
         QTextCharFormat format;
         format.setFontFamilies({face.family()});
+        format.setProperty(RequestedFontProperty, face.family());
         changeAll(format);
     });
     auto size = new QDoubleSpinBox;
@@ -155,6 +158,7 @@ void EditorWindow::editShape() {
     auto p = page();
     if (!p)
         return;
+    p->canvas->finishTextEditing(true);
     auto layer = p->document.active();
     require(layer && layer->metadata.value("shape").isObject(), "Select an editable shape layer");
     auto style = layer->metadata.value("shape").toObject();

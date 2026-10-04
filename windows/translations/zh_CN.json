@@ -649,5 +649,13 @@
   "Paint surface transform is not invertible": "绘画对象的变换无法求逆",
   "Not enough memory to expand paint surface": "内存不足，无法扩展绘画范围",
   "Not enough memory for paint mask": "内存不足，无法准备绘画蒙版",
-  "Not enough memory for expanded stroke": "内存不足，无法扩展笔迹"
+  "Not enough memory for expanded stroke": "内存不足，无法扩展笔迹",
+  "Font Mapping": "字体映射",
+  "Document font": "文档字体",
+  "Windows font": "Windows 字体",
+  "Text color": "文字颜色",
+  "Apply text (Ctrl+Enter)": "应用文字（Ctrl+Enter）",
+  "Cancel text (Escape)": "取消文字（Escape）",
+  "Text box exceeds size limit": "文字框超过尺寸限制",
+  "Shape exceeds size limit": "形状超过尺寸限制"
 }

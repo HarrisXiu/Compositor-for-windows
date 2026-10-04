@@ -192,6 +192,7 @@ void EditorWindow::save(bool saveAs) {
         if (!path.endsWith(".comp", Qt::CaseInsensitive))
             path += ".comp";
     }
+    p->canvas->finishTextEditing(true);
     p->canvas->cancelInteraction();
     auto snapshot = p->document;
     const auto contentState = p->contentState;
@@ -295,6 +296,7 @@ void EditorWindow::crop() {
 bool EditorWindow::canClose(EditorPage *p) {
     if (!p)
         return true;
+    p->canvas->finishTextEditing(true);
     if (p->saving) {
         showError("Wait for the background save to finish");
         return false;

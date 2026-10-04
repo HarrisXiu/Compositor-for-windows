@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "distort.h"
+#include "editable_layers.h"
 #include <QJsonArray>
 #include <QPainter>
 #include <QPainterPath>
@@ -182,10 +183,24 @@ QJsonObject uprightBox(const QVector<QJsonObject> &transforms) {
 }
 void retransformLayer(Layer &layer, const QJsonObject &moved) {
     const auto old = layer.transform();
-    layer.metadata["transform"] = moved;
     const auto placement = layer.metadata.value("maskPlacement");
+    QImage resized;
+    if (layer.metadata.value("shape").isObject() && old.value("size") != moved.value("size")) {
+        const auto size = moved.value("size").toArray();
+        const double width = std::ceil(size[0].toDouble()), height = std::ceil(size[1].toDouble());
+        require(std::isfinite(width) && std::isfinite(height) && width >= 1 && height >= 1 &&
+                    width <= MaxSide && height <= MaxSide && width * height <= MaxSurfacePixels,
+                "Shape exceeds size limit");
+        resized = renderShape(layer.metadata.value("shape").toObject(), {int(width), int(height)});
+    }
+    layer.metadata["transform"] = moved;
     if (layer.metadata.value("maskLinked").toBool(true) && placement.isObject())
         layer.metadata["maskPlacement"] = followedTransform(placement.toObject(), old, moved);
+    if (!resized.isNull()) {
+        if (!layer.mask.isNull() && !placement.isObject())
+            layer.metadata["maskPlacement"] = moved;
+        layer.image = resized;
+    }
 }
 
 Warped warpImage(const QImage &image, const QJsonObject &transform,

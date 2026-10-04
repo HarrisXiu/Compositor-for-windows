@@ -91,6 +91,7 @@ void Canvas::zoomTo(double value, QPointF anchor) {
     zoom = std::clamp(value, .01, 64.0);
     pan_ += anchor - (canvasRect().topLeft() + point * zoom);
     fitted_ = true;
+    syncTextEditor();
     update();
     emit sessionChanged();
 }
