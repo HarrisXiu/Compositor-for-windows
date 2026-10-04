@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 2026-10-04 — AI3, version remains 0.4.0
+
+- Added soft BiRefNet Lite background removal on the active pixel layer, preserving original pixels in an editable layer mask.
+- Added guided refinement, contrast and edge shift, cached inference, cancellable checkerboard/mask previews and full-resolution commit with one undo step.
+- Preserved selection and existing-mask coverage; baked old placement into the layer grid and linked the resulting mask. Undo restores original mask metadata.
+- Made the AI2 failure rollback test await the completed error state instead of a fixed sleep, and made its fixture failure flag atomic.
+- Added an eleventh CTest suite, independent Python reference generation, CPU/Intel real-editor checks and Chinese/Japanese UI. See [AI3 verification](AI3_README.md).
+
+### 2026-10-04 — AI2, version remains 0.4.0
+
+- Added BiRefNet Lite subject selection and SAM 2/MobileSAM foreground/background point selection on the canvas.
+- Added background inference, encoding reuse, transactional previews and cancel/apply/undo; prevented stale output after image, tool, selection or project changes.
+- Normalized LF/CRLF when comparing complete model license texts; model size/SHA256 and license-content checks remain strict.
+- Added `compositor_ai_selection_tests` and included it in future offline self-test bundles. Ten CTest suites and CPU/Intel real-model/editor checks pass; see [AI2 verification](AI2_README.md).
+
 ### 2026-10-04 — follow-ups
 
 - Translated 30 more edit-history labels and messages (brush, clone, healing, import, layer and selection operations) for Simplified Chinese and Japanese, so Edit > Undo/Redo no longer shows them in English.

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "canvas.h"
+#include "ai_selection.h"
+#include <QPointer>
+class QDialog;
 #include <QKeySequence>
 #include <QMainWindow>
 #include <QUndoStack>
@@ -25,6 +28,7 @@ class EditorPage : public QWidget {
     EditorSession session;
     Canvas *canvas;
     QUndoStack history;
+    std::shared_ptr<AiSelectionService> aiSelection = createAiSelectionService();
     QString path;
     bool saving = false;
     quint64 revision = 0;
@@ -44,6 +48,7 @@ class EditorPage : public QWidget {
     }
   signals:
     void documentChanged();
+    void editWillStart();
     void error(const QString &message);
 
   private:
@@ -67,6 +72,7 @@ class EditorWindow : public QMainWindow {
 
   private:
     QTabWidget *tabs_;
+    QPointer<QDialog> aiSelectionDialog_;
     QTreeWidget *layers_;
     QComboBox *blend_;
     QDoubleSpinBox *opacity_, *x_, *y_, *width_, *height_, *angle_, *brushSize_, *hardness_,
@@ -99,6 +105,9 @@ class EditorWindow : public QMainWindow {
     void maskFromSelection();
     void resizeSelectionDialog(bool expand);
     void colorRangeDialog();
+    void removeBackground();
+    void selectSubject();
+    void selectObject();
     void fillSelection(bool erase = false, bool background = false);
     void crop();
     bool canClose(EditorPage *page);

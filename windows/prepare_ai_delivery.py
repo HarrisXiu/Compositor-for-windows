@@ -111,7 +111,8 @@ def main():
     shutil.copytree(args.package, bundle / "bin")
     for name in ("compositor_tests", "compositor_model_tests", "compositor_ai_tests", "compositor_ui_tests",
                  "compositor_photoshop_tests", "compositor_raw_tests", "compositor_dither_tests", "compositor_layer_tests",
-                 "compositor_canvas_tests", "compositor_transform_tests", "compositor_text_shape_tests"):
+                 "compositor_canvas_tests", "compositor_transform_tests", "compositor_text_shape_tests",
+                 "compositor_ai_selection_tests", "compositor_ai_background_tests"):
         shutil.copy2(args.build / (name + ".exe"), bundle / "bin")
     shutil.copy2(args.qt_root / "bin/Qt6Test.dll", bundle / "bin")
     shutil.copy2(args.qt_root / "plugins/platforms/qoffscreen.dll", bundle / "bin/platforms")

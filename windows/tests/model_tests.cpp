@@ -273,6 +273,13 @@ class ModelTests : public QObject {
         QVERIFY2(job.result().success, qPrintable(job.result().error));
         QVERIFY(inspectAiModel(model, cache.path()).installed);
         const auto license = cache.filePath("fixture/LICENSE.txt");
+        auto text = aiModelLicenseFiles(model).value("LICENSE.txt");
+        text.replace("\r\n", "\n");
+        QVERIFY(writeFile(license, text));
+        QVERIFY(inspectAiModel(model, cache.path()).installed);
+        text.replace("\n", "\r\n");
+        QVERIFY(writeFile(license, text));
+        QVERIFY(inspectAiModel(model, cache.path()).installed);
         QVERIFY(writeFile(license, "wrong license"));
         QVERIFY(!inspectAiModel(model, cache.path()).installed);
         job = importAiModelAsync(model, source.path(), cache.path());

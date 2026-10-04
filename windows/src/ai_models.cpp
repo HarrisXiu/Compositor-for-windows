@@ -129,7 +129,12 @@ AiModelState inspectAiModel(const AiModelDefinition &model, const QString &root,
     const auto documents = aiModelLicenseFiles(model);
     for (auto it = documents.begin(); it != documents.end(); ++it) {
         QFile file(QDir(directory).filePath(it.key()));
-        if (!file.open(QIODevice::ReadOnly) || file.readAll() != it.value())
+        if (!file.open(QIODevice::ReadOnly))
+            return {false, "Model license files are missing or do not match the installed model."};
+        // Git checkouts and portable imports can use different text line endings.
+        // Preserve the complete license/notice content while comparing LF and CRLF equally.
+        auto installed = file.readAll(), expected = it.value();
+        if (installed.replace("\r\n", "\n") != expected.replace("\r\n", "\n"))
             return {false, "Model license files are missing or do not match the installed model."};
     }
     return {true, "Installed and SHA256 verified. Available offline."};

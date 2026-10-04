@@ -63,6 +63,8 @@ class Canvas : public QWidget {
     void beginTextEditing(const QString &id = {}, QRectF bounds = {});
     void finishTextEditing(bool apply = true);
     bool textEditing() const { return textEditor_ != nullptr; }
+    void setAiPicking(bool enabled);
+    void setAiPoints(const QVector<QPointF> &points, const QVector<int> &labels);
     void applyCropFrame();
     void cancelCropFrame();
     QRect selectionBounds() const;
@@ -84,6 +86,10 @@ class Canvas : public QWidget {
     void colorPicked(QColor color);
     void filesDropped(const QStringList &paths);
     void selectionChanged();
+    void aiPointPicked(QPointF point, bool exclude);
+    void aiApplyRequested();
+    void aiCancelRequested();
+    void aiRemovePointRequested();
     void selectionEdited(const QString &label, const QImage &before, const QImage &after);
     void sessionChanged();
     void cropRequested(QRect bounds);
@@ -127,6 +133,9 @@ class Canvas : public QWidget {
     bool dragging_ = false, cloneReady_ = false;
     Qt::KeyboardModifiers selectionModifiers_{};
     QPainterPath lasso_;
+    bool aiPicking_ = false;
+    QVector<QPointF> aiPoints_;
+    QVector<int> aiLabels_;
     QVector<QPointF> polygonPoints_;
     QPainterPath selectionOutline_;
     qint64 selectionOutlineKey_ = 0;

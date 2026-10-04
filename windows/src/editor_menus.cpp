@@ -297,6 +297,8 @@ void EditorWindow::buildMenus() {
     });
     action(select, "Expand…", {}, [this] { resizeSelectionDialog(true); });
     action(select, "Contract…", {}, [this] { resizeSelectionDialog(false); });
+    action(select, "Select Subject", {}, [this] { selectSubject(); });
+    action(select, "Select Object…", {}, [this] { selectObject(); });
     action(select, "Color Range…", {}, [this] { colorRangeDialog(); });
     action(select, "Mask from Selection", {}, [this] { maskFromSelection(); });
     auto image = menuBar()->addMenu("&Image");
@@ -331,6 +333,7 @@ void EditorWindow::buildMenus() {
         action(filters, kind + "…",
                QKeySequence(kind == "Content-Aware Fill" ? "Shift+Delete" : ""),
                [this, kind] { filter(kind); });
+    action(filters, "Remove Background…", {}, [this] { removeBackground(); });
     auto view = menuBar()->addMenu("&View");
     buildViewMenu(view);
     auto language = view->addMenu("Language");
