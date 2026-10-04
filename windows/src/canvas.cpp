@@ -354,6 +354,21 @@ void Canvas::replaceSelection(const QImage &mask, const QString &label) {
     emit selectionChanged();
     update();
 }
+void Canvas::setAiPicking(bool enabled) {
+    cancelInteraction();
+    aiPicking_ = enabled;
+    if (!enabled) {
+        aiPoints_.clear();
+        aiLabels_.clear();
+    }
+    update();
+}
+void Canvas::setAiPoints(const QVector<QPointF> &points, const QVector<int> &labels) {
+    require(points.size() == labels.size(), "Invalid AI point overlay");
+    aiPoints_ = points;
+    aiLabels_ = labels;
+    update();
+}
 void Canvas::clearSelection() {
     cancelInteraction();
     replaceSelection({}, "Deselect");
@@ -505,6 +520,18 @@ void Canvas::paintEvent(QPaintEvent *) {
             ants.setDashOffset(antsPhase_);
             p.setPen(ants);
             p.drawPath(outline);
+        }
+    }
+    if (aiPicking_) {
+        for (qsizetype i = 0; i < aiPoints_.size(); ++i) {
+            const auto position = canvasRect().topLeft() + aiPoints_[i] * zoom;
+            p.setPen(QPen(Qt::white, 2));
+            p.setBrush(aiLabels_[i] ? QColor(40, 170, 100) : QColor(215, 65, 65));
+            p.drawEllipse(position, 6, 6);
+            p.setPen(QPen(Qt::white, 1));
+            p.drawLine(position - QPointF(3, 0), position + QPointF(3, 0));
+            if (aiLabels_[i])
+                p.drawLine(position - QPointF(0, 3), position + QPointF(0, 3));
         }
     }
     controller().paintOverlay(p);
@@ -887,6 +914,12 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
     start_ = last_ = toDocument(e->position());
     hover_ = e->position();
     hovered_ = true;
+    if (aiPicking_ && !temporaryPan_) {
+        if (start_.x() >= 0 && start_.y() >= 0 && start_.x() < document_->size().width() &&
+            start_.y() < document_->size().height())
+            emit aiPointPicked(start_, e->modifiers() & Qt::AltModifier);
+        return;
+    }
     try {
         if (beginOverlayEdit(e))
             return;

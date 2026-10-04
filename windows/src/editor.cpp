@@ -14,6 +14,7 @@
 #include <QFutureWatcher>
 #include <QJsonArray>
 #include <QMenu>
+#include <QDialog>
 #include <QMessageBox>
 #include <QPainter>
 #include <QStatusBar>
@@ -40,7 +41,11 @@ EditorWindow::EditorWindow() {
     buildPanels();
     Shortcuts::instance().validateLoaded();
     qApp->installEventFilter(this);
-    connect(tabs_, &QTabWidget::currentChanged, this, [this] { refreshPanels(); });
+    connect(tabs_, &QTabWidget::currentChanged, this, [this] {
+        if (aiSelectionDialog_)
+            aiSelectionDialog_->reject();
+        refreshPanels();
+    });
     connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
         auto p = qobject_cast<EditorPage *>(tabs_->widget(index));
         if (p && canClose(p)) {
@@ -64,6 +69,8 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
     Shortcuts::instance().registerAction(a, "menu/" + menuSource + "/" + title, "Menus");
     connect(a, &QAction::triggered, this, [this, callback] {
         try {
+            if (aiSelectionDialog_)
+                aiSelectionDialog_->reject();
             callback();
         } catch (const std::exception &e) {
             showError(QString::fromUtf8(e.what()));
@@ -221,6 +228,8 @@ void EditorWindow::save(bool saveAs) {
     }));
 }
 void EditorWindow::setTool(Tool tool) {
+    if (aiSelectionDialog_)
+        aiSelectionDialog_->reject();
     tool_ = tool;
     if (page())
         page()->canvas->setTool(tool);
@@ -307,6 +316,8 @@ bool EditorWindow::canClose(EditorPage *p) {
     return false;
 }
 void EditorWindow::closeEvent(QCloseEvent *e) {
+    if (aiSelectionDialog_)
+        aiSelectionDialog_->reject();
     for (int i = 0; i < tabs_->count(); ++i)
         if (!canClose(qobject_cast<EditorPage *>(tabs_->widget(i)))) {
             e->ignore();

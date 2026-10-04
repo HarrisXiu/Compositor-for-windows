@@ -655,5 +655,22 @@
   "Pick a color to preview the selection.": "选取颜色以预览选区。",
   "Updating selection…": "正在更新选区…",
   "Selection preview ready.": "选区预览已更新。",
-  "Selection": "选区"
+  "Selection": "选区",
+  "Select Subject": "选择主体",
+  "Select Object…": "选择对象…",
+  "Select Object": "选择对象",
+  "Click the object on the canvas. Alt-click excludes background. Enter applies; Esc cancels.": "在画布上点击对象。Alt 点击排除背景。Enter 确认；Esc 取消。",
+  "Point type": "提示点类型",
+  "Foreground": "前景",
+  "Remove Last Point": "删除上一个提示点",
+  "Clear Points": "清除提示点",
+  "Manage AI Models…": "管理 AI 模型…",
+  "Add a foreground point first.": "请先添加一个前景提示点。",
+  "Selection canceled.": "选区计算已取消。",
+  "Selection ready.": "选区已就绪。",
+  "Calculating selection…": "正在计算选区…",
+  "The maximum is 1024 points. Remove or clear points to continue.": "最多支持 1024 个提示点。请删除或清除提示点后继续。",
+  "AI Subject Selection": "AI 主体选区",
+  "AI Object Selection": "AI 对象选区",
+  "Model": "模型"
 }

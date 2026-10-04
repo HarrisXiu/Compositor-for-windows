@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### 2026-10-04 — AI2, version remains 0.4.0
+
+- Added BiRefNet Lite subject selection and SAM 2/MobileSAM foreground/background point selection on the canvas.
+- Added background inference, encoding reuse, transactional previews and cancel/apply/undo; prevented stale output after image, tool, selection or project changes.
+- Normalized LF/CRLF when comparing complete model license texts; model size/SHA256 and license-content checks remain strict.
+- Added `compositor_ai_selection_tests` and included it in future offline self-test bundles. Ten CTest suites and CPU/Intel real-model/editor checks pass; see [AI2 verification](AI2_README.md).
+
 ### 2026-10-04 — S1/S3, version remains 0.4.0
 
 - Added polygonal lasso with vertex/closing previews, Backspace, apply/cancel and selection combination modes.

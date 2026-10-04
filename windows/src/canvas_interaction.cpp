@@ -266,6 +266,13 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
     auto e = &event;
     const auto mods = e->modifiers();
     const int key = e->key();
+    if (aiPicking_) {
+        if (key == Qt::Key_Escape) { emit aiCancelRequested(); return true; }
+        if (key == Qt::Key_Return || key == Qt::Key_Enter) { emit aiApplyRequested(); return true; }
+        if (key == Qt::Key_Backspace) { emit aiRemovePointRequested(); return true; }
+        if (key != Qt::Key_Space)
+            return true;
+    }
     if (controller().keyPress(e))
         return true;
     if (key == Qt::Key_Escape) {

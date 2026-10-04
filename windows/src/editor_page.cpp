@@ -67,6 +67,7 @@ EditorPage::EditorPage(Document source, QWidget *parent)
     layout->addWidget(canvas);
     history.setUndoLimit(40);
     connect(canvas, &Canvas::editStarted, this, [this] {
+        emit editWillStart();
         beforeInteraction_ = document;
         beforeSelection_ = session.selection;
         beforeInteractionLayers_ = session.selectedLayerIDs;
@@ -146,6 +147,7 @@ void EditorPage::record(const QString &label, const Document &before, const Docu
     }
 }
 void EditorPage::edit(const QString &label, const std::function<void(Document &)> &operation) {
+    emit editWillStart();
     canvas->cancelInteraction();
     auto before = document;
     auto selection = session.selection;

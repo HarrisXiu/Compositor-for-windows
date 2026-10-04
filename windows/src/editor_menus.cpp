@@ -295,6 +295,8 @@ void EditorWindow::buildMenus() {
     });
     action(select, "Expand…", {}, [this] { resizeSelectionDialog(true); });
     action(select, "Contract…", {}, [this] { resizeSelectionDialog(false); });
+    action(select, "Select Subject", {}, [this] { selectSubject(); });
+    action(select, "Select Object…", {}, [this] { selectObject(); });
     action(select, "Color Range…", {}, [this] { colorRangeDialog(); });
     action(select, "Mask from Selection", {}, [this] { maskFromSelection(); });
     auto image = menuBar()->addMenu("&Image");
