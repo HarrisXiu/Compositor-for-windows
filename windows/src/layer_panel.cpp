@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "editor.h"
+#include "distort.h"
 #include "language.h"
 #include "layer_operations.h"
 #include "layer_transfer.h"
@@ -35,6 +36,7 @@ class LayerTree final : public QTreeWidget {
     std::function<Document()> document;
     std::function<QSet<QString>()> selection;
     std::function<void(QString, bool, Qt::KeyboardModifiers)> thumbnailClicked;
+    std::function<void()> finishText;
 
   protected:
     void startDrag(Qt::DropActions) override {
@@ -75,6 +77,8 @@ class LayerTree final : public QTreeWidget {
         relocated(transfer->selected, parent, anchor, above);
     }
     void mousePressEvent(QMouseEvent *event) override {
+        if (finishText)
+            finishText();
         auto item = itemAt(event->position().toPoint());
         const int column = columnAt(int(event->position().x()));
         QStyleOptionViewItem option;
@@ -141,6 +145,10 @@ void EditorWindow::buildPanels() {
     opacity_->setSuffix(" % opacity");
     layout->addWidget(opacity_);
     auto layerTree = new LayerTree;
+    layerTree->finishText = [this] {
+        if (auto p = page())
+            p->canvas->finishTextEditing(true);
+    };
     layerTree->relocated = [this](const QSet<QString> &ids, const QString &parent,
                                   const QString &anchor, bool above) {
         if (auto p = page())
@@ -281,8 +289,10 @@ void EditorWindow::buildPanels() {
     connect(layers_, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem *item) {
         if (syncing_ || !page() || !item)
             return;
+        const auto id = item->data(0, Qt::UserRole).toString();
+        page()->canvas->finishTextEditing(true);
         page()->canvas->cancelInteraction();
-        page()->document.metadata["activeLayerID"] = item->data(0, Qt::UserRole).toString();
+        page()->document.metadata["activeLayerID"] = id;
         if (auto layer = page()->document.active(); !layer || layer->mask.isNull())
             page()->session.target = EditTarget::Pixels;
         QTimer::singleShot(0, this, &EditorWindow::refreshPanels);
@@ -293,6 +303,8 @@ void EditorWindow::buildPanels() {
         QSet<QString> ids;
         for (auto item : layers_->selectedItems())
             ids.insert(item->data(0, Qt::UserRole).toString());
+        if (ids != page()->session.selectedLayerIDs)
+            page()->canvas->finishTextEditing(true);
         page()->session.selectedLayerIDs = ids;
         if (!ids.contains(page()->document.activeId()))
             page()->document.metadata["activeLayerID"] = ids.isEmpty() ? QString() : *ids.begin();
@@ -458,10 +470,11 @@ void EditorWindow::updateTransform() {
                  a = angle_->value();
     page()->edit("Transform Layer", [&](Document &d) {
         if (auto l = d.active()) {
-            l->setBounds({x, y, w, h});
             auto t = l->transform();
+            t["origin"] = QJsonArray{x, y};
+            t["size"] = QJsonArray{w, h};
             t["rotation"] = a;
-            l->metadata["transform"] = t;
+            retransformLayer(*l, t);
         }
     });
 }

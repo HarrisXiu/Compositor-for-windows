@@ -65,12 +65,14 @@ void EditorWindow::buildMenus() {
     auto edit = menuBar()->addMenu("&Edit");
     action(edit, "Undo", QKeySequence::Undo, [this] {
         if (page()) {
+            page()->canvas->finishTextEditing(true);
             page()->canvas->cancelInteraction();
             page()->history.undo();
         }
     });
     action(edit, "Redo", QKeySequence::Redo, [this] {
         if (page()) {
+            page()->canvas->finishTextEditing(true);
             page()->canvas->cancelInteraction();
             page()->history.redo();
         }

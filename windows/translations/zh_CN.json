@@ -697,5 +697,13 @@
   "Selection must match the canvas size": "选区必须与画布大小一致",
   "Shape Layer": "形状图层",
   "Spot Healing": "污点修复",
-  "Text Layer": "文字图层"
+  "Text Layer": "文字图层",
+  "Font Mapping": "字体映射",
+  "Document font": "文档字体",
+  "Windows font": "Windows 字体",
+  "Text color": "文字颜色",
+  "Apply text (Ctrl+Enter)": "应用文字（Ctrl+Enter）",
+  "Cancel text (Escape)": "取消文字（Escape）",
+  "Text box exceeds size limit": "文字框超过尺寸限制",
+  "Shape exceeds size limit": "形状超过尺寸限制"
 }

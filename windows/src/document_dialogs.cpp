@@ -40,6 +40,7 @@ void EditorWindow::exportImage() {
     auto p = page();
     if (!p)
         return;
+    p->canvas->finishTextEditing(true);
     require(p->document.previewLimitations().isEmpty(),
             "Export is unavailable because this project contains features not yet rendered: " +
                 p->document.previewLimitations().join(", "));

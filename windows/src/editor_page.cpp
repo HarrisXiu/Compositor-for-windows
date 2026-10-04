@@ -107,6 +107,8 @@ EditorPage::~EditorPage() {
     // The window that owns this page is tearing down its tabs; clearing the undo stack below must
     // not tell it to refresh panels it is already destroying.
     disconnect(this, &EditorPage::documentChanged, nullptr, nullptr);
+    // Finish while the document/history still exist, before QWidget hides its children.
+    canvas->finishTextEditing(false);
 }
 void EditorPage::changed() {
     QSet<QString> valid;
@@ -151,6 +153,7 @@ void EditorPage::record(const QString &label, const Document &before, const Docu
     }
 }
 void EditorPage::edit(const QString &label, const std::function<void(Document &)> &operation) {
+    canvas->finishTextEditing(true);
     canvas->cancelInteraction();
     auto before = document;
     auto selection = session.selection;

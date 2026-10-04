@@ -697,5 +697,13 @@
   "Selection must match the canvas size": "選択範囲はキャンバスのサイズと一致する必要があります",
   "Shape Layer": "シェイプレイヤー",
   "Spot Healing": "スポット修復",
-  "Text Layer": "テキストレイヤー"
+  "Text Layer": "テキストレイヤー",
+  "Font Mapping": "フォント対応",
+  "Document font": "文書のフォント",
+  "Windows font": "Windows フォント",
+  "Text color": "文字の色",
+  "Apply text (Ctrl+Enter)": "文字を適用（Ctrl+Enter）",
+  "Cancel text (Escape)": "文字の編集をキャンセル（Escape）",
+  "Text box exceeds size limit": "テキスト枠がサイズ制限を超えています",
+  "Shape exceeds size limit": "シェイプがサイズ制限を超えています"
 }
