@@ -223,6 +223,32 @@ class CanvasTests : public QObject {
         auto loaded = loadProject(path);
         QCOMPARE(renderDocument(loaded), rendered);
     }
+    void maskFromSelectionUpgradesOlderProjects() {
+        EditorWindow w;
+        auto p = page(w);
+        p->document = smallDocument();
+        // Masks need format version 4, and a folder's version 6.
+        p->document.metadata["version"] = 3;
+        QImage mask(64, 64, QImage::Format_Grayscale8);
+        mask.fill(255);
+        p->session.selection = mask;
+        int warnings = 0;
+        QTimer closer;
+        QObject::connect(&closer, &QTimer::timeout, [&] {
+            if (auto *box = QApplication::activeModalWidget()) {
+                ++warnings;
+                box->close();
+            }
+        });
+        closer.start(10);
+        action(w, "Mask from Selection")->trigger();
+        QCOMPARE(warnings, 0);
+        QVERIFY(!p->document.active()->mask.isNull());
+        QCOMPARE(p->document.metadata["version"].toInt(), CurrentVersion);
+        QTemporaryDir folder;
+        saveProject(p->document, folder.filePath("old.comp"));
+        QVERIFY(!loadProject(folder.filePath("old.comp")).active()->mask.isNull());
+    }
     void colorRangePremultipliedAndExclusions() {
         QImage image(5, 1, QImage::Format_RGBA8888_Premultiplied);
         image.fill(Qt::transparent);

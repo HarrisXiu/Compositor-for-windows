@@ -41,6 +41,7 @@ void EditorWindow::maskFromSelection() {
             {"rotation", 0}, {"flipX", false}, {"flipY", false}};
         layer->metadata["maskEnabled"] = true;
         layer->metadata["maskLinked"] = true;
+        d.metadata["version"] = CurrentVersion;
     });
 }
 namespace {

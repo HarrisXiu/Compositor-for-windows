@@ -34,4 +34,4 @@ AI1 from `42f4103` is now merged with this worktree's C1–C5; see the [integrat
 
 T1/T2 add free distortion, multi-layer/folder transforms, Move-tool dragging of every selected layer and Alt-drag duplication. See [delivery notes](T1-T2_REPORT.md). This does not complete mesh distort, S2 selection transforms or Mac reference comparison.
 
-S1/S3 are implemented and merged with T1/T2: polygonal lasso, cancellable disk expansion/contraction, selection masks and transactional color range. Nine CTest suites pass. See [delivery notes](S1-S3_REPORT.md). S2 and AI editing interactions remain pending.
+S1/S3 are implemented and merged with T1/T2: polygonal lasso, cancellable disk expansion/contraction, selection masks and transactional color range. Combined with T1/T2 and AI1, ten CTest suites pass (308 tests, 5 optional/model-dependent skipped). Mask from Selection now upgrades older project versions. See [delivery notes](S1-S3_REPORT.md). S2 and AI editing interactions remain pending.
