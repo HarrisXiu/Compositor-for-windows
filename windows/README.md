@@ -2,7 +2,7 @@
 
 **当前 Windows 版尚未完全完成，后续将持续更新。** This is Windows migration preview 0.4, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
 
-移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架、L1–L4 和 C1–C5 的当前范围已完成，R2–R4 与 AI1 推理基础层/模型管理已整合；高级工具、AI 编辑交互、大文档与跨平台验收继续完善。概括计划见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)，整合验证见 [AI1 整合报告](AI1_INTEGRATION_REPORT.md)。版本保持 0.4.0，自动更新继续排除。
+移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架、L1–L4、C1–C5、T1/T2、S1/S3、P1–P3、X1/X2 和 AI1–AI3 的当前范围已完成，R2–R4 已整合；浮动选区与选区变换（S2）、网格扭曲、大文档与跨平台验收继续完善。概括计划见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)，整合验证见 [AI1 整合报告](AI1_INTEGRATION_REPORT.md)。版本保持 0.4.0，自动更新继续排除。
 
 ## Run
 
@@ -22,7 +22,7 @@ From PowerShell at the repository root:
 .\windows\build.ps1 -QtRoot C:\Qt\6.10.2\msvc2022_64 -Package
 ```
 
-The script fetches the SHA256-pinned LibRaw 0.22.2, ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 SDKs once, configures CMake, compiles C/C++, runs ten test suites, deploys the Qt/LibRaw/AI DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip` when `-Package` is supplied. Omit `-Package` for a build and test run only. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
+The script fetches the SHA256-pinned LibRaw 0.22.2, ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 SDKs once, configures CMake, compiles C/C++, runs thirteen test suites, deploys the Qt/LibRaw/AI DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip` when `-Package` is supplied. Omit `-Package` for a build and test run only. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
 
 When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
@@ -126,7 +126,7 @@ Original Compositor and the Windows port are MIT licensed. Qt is dynamically lin
 
 See [C1–C5 delivery notes](C1-C5_REPORT.md) for this step’s scope and validation. Application version remains 0.4.0; `.comp` remains 11.
 
-See the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification; the current eleven-suite build also includes T1/T2, P1–P3 and X1/X2. The offline self-test launcher and delivery tooling include the canvas, transform and text/shape suites as well as the existing AI/model suites.
+See the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification; the current thirteen-suite build also includes T1/T2, S1/S3, P1–P3, X1/X2, AI2 and AI3 (384 tests pass, 20 real-model or benchmark cases skip by default). The offline self-test launcher and delivery tooling include the canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites.
 
 See [P1–P3 delivery notes](P1-P3_REPORT.md) for painting expansion, clone/gradient/fill verification and remaining memory/performance/visual acceptance.
 
