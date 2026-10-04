@@ -328,10 +328,12 @@ class TransformTests : public QObject {
         }
         // The handle square now sits where the corner was dragged to.
         const auto corner = at(p, 84, 28);
+        const auto pixelRatio = shot.devicePixelRatio();
         bool found = false;
         for (int y = -4; y <= 4 && !found; ++y)
             for (int x = -4; x <= 4; ++x)
-                found |= shot.pixelColor(corner + QPoint(x, y)) == QColor(Qt::white);
+                found |= shot.pixelColor(QPoint(qRound((corner.x() + x) * pixelRatio),
+                                               qRound((corner.y() + y) * pixelRatio))) == QColor(Qt::white);
         QVERIFY(found);
         if (qEnvironmentVariableIsSet("COMPOSITOR_TRANSFORM_SCREENSHOT"))
             shot.save(qEnvironmentVariable("COMPOSITOR_TRANSFORM_SCREENSHOT"));

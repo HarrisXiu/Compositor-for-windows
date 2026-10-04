@@ -4,7 +4,7 @@
 
 本项目基于 [robbietilton/Compositor](https://github.com/robbietilton/Compositor)，将原有 macOS 图像合成与照片编辑流程移植到 Windows。Windows 应用采用 **C11、C++20 和 Qt 6 Widgets**，复用原项目的 C 像素算法。原 macOS 源码仍保留在仓库中。
 
-项目继续采用 **MIT 协议**，第三方库与模型遵循各自许可。按移植范围约定。
+项目继续采用 **MIT 协议**，第三方库与模型遵循各自许可。按移植范围约定，不提供自动更新功能。
 
 ## 当前能力
 
@@ -38,7 +38,9 @@
 
 合并 T1/T2、S1/S3、P1–P3、X1/X2 和 AI1–AI3 后，统一 13 组测试全部通过（384 项通过、0 失败；另有 20 项需要真实模型或基准数据的用例默认跳过），覆盖原有编辑功能、画布交互、变换、选区、绘画、文字与形状、AI 推理与模型管理；变换见 [T1/T2 交付说明](windows/T1-T2_REPORT.md)，文字与形状见 [X1/X2 交付记录](windows/X1-X2_REPORT.md)，绘画见 [P1–P3 交付记录](windows/P1-P3_REPORT.md)，AI 基础层见 [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md)。完整 Mac 功能与视觉一致性仍需验收。
 
-AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI2 主体/对象选择和 AI3 背景移除/精细蒙版已接入，默认回归通过；真实模型验收需要本地模型和参考数据，方法见 [AI2 说明](windows/AI2_README.md) 与 [AI3 说明](windows/AI3_README.md)。通过 **帮助 > AI 模型…** 导入匹配的本地模型；正式模型地址尚未发布，下载入口暂不启用。使用与支持范围见 [AI1 说明](windows/AI1_README.md)。
+2026-10-04 已核对当天全部功能分支的合入状态，并重新执行统一回归及可选实图检查；结果与验收边界见 [统一验收报告](windows/ACCEPTANCE_REPORT_2026-10-04.md)。历史分支报告中的“未合入”描述保留当时状态，以统一报告为准。
+
+AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI2 主体/对象选择和 AI3 背景移除/精细蒙版已接入，验证方法见 [AI2 说明](windows/AI2_README.md) 与 [AI3 说明](windows/AI3_README.md)。通过 **帮助 > AI 模型…** 导入匹配的本地模型；正式模型地址尚未发布，下载入口暂不启用。使用与支持范围见 [AI1 说明](windows/AI1_README.md)。
 
 后续重点是浮动选区与选区变换（S2）、网格扭曲等剩余变换，扩大真实文件与硬件测试，再完成跨平台对照和发布验收。详细任务见 [移植进度](windows/PORTING_STATUS.md)。
 
@@ -54,6 +56,7 @@ AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使�
 
 ## 文档
 
+- [统一验收：2026-10-04 全部分支](windows/ACCEPTANCE_REPORT_2026-10-04.md)
 - [开发日志：2026-10-03 至 2026-10-04](windows/DEVELOPMENT_LOG.md)
 - [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md) · [AI1 使用说明](windows/AI1_README.md)
 - [版本变更记录](windows/CHANGELOG.md)

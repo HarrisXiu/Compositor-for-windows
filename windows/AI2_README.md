@@ -2,6 +2,8 @@
 
 ## 当前结果
 
+AI2 已合入 `the-one-for-windows`，与今天其他功能分支的统一验收见 [2026-10-04 报告](ACCEPTANCE_REPORT_2026-10-04.md)。以下分支基线与测试数记录独立开发阶段。
+
 `codex/ai2` 基于 S1/S3 提交 `6b18f74`（含 AI1 整合基线 `edbf0c5`），完成开发计划中的 AI2：BiRefNet 主体选择，以及 SAM 2 / MobileSAM 点击提示对象选择。应用版本保持 0.4.0，`.comp` 格式保持 11。选区、提示点和预览都是会话状态，不写入项目；像素内容保持不变。
 
 主体使用已验证、MIT 许可的 BiRefNet Lite FP32。对象使用 SAM 2 Hiera Tiny 或 MobileSAM FP32，均沿用 AI1 的固定模型哈希与许可证。应用不需要 Python。
@@ -59,6 +61,4 @@ $env:COMPOSITOR_AI_SELECTION_PROVIDER = 'cpu' # 或 dml，强制受支持的 Int
 
 ## 后续范围
 
-后续 AI3 已在独立 `codex/ai3` 分支完成，见 [AI3 说明](AI3_README.md)。下面保留 AI2 提交时的范围记录。
-
-AI3 背景移除和引导滤波细化尚未开发。GPU 仍只支持受支持的 Intel 核显 DirectML，其他显卡使用 CPU；不新增 NVIDIA / AMD DirectML 适配，NVIDIA CUDA 留待后续。本轮不推送、不合入主分支、不创建 Release 或上传模型资产。
+AI3 背景移除与引导滤波细化已完成并合入主分支，见 [AI3 说明](AI3_README.md)。GPU 仍只支持受支持的 Intel 核显 DirectML，其他显卡使用 CPU；NVIDIA CUDA、更多硬件与人工质量验收留待后续。独立 AI2 开发阶段没有推送、合入或上传模型资产；当前合入状态以统一报告为准。

@@ -1,5 +1,7 @@
 # AI1 integration — 2026-10-04
 
+This report preserves the original AI1 merge snapshot. AI2/AI3 and today's other editor branches have since been integrated; current combined results are in the [2026-10-04 acceptance report](ACCEPTANCE_REPORT_2026-10-04.md).
+
 Merged `ai1-runtime` at `42f4103` into `the-one-for-windows`, based on `7fcba58`. The existing L1–L4/R1–R4/C1–C5 editor behavior is retained. Application version remains **0.4.0**, `.comp` remains **11**, project source remains MIT licensed, and automatic updating remains excluded.
 
 ## Integrated behavior

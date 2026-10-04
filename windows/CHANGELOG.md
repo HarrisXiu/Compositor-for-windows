@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 2026-10-04 — combined acceptance, version remains 0.4.0
+
+- Verified today's AI1–AI3, T1/T2, S1/S3, P1–P3 and X1/X2 branches are integrated with the existing L/R/C work; see [combined acceptance](ACCEPTANCE_REPORT_2026-10-04.md).
+- Deployed Qt's native Schannel TLS plugin beside AI application/test targets; the explicit pinned HTTPS transfer now succeeds without OpenSSL on PATH.
+- Corrected transform screenshot checks to use physical pixels at the captured device pixel ratio; native Windows display scaling and offscreen checks remain supported.
+- Kept push CI to build and test without packaging or uploading a portable ZIP, matching the current source-only delivery request.
+- Updated current README/status notes while preserving historical development-stage evidence. No application or project-format version change, updater, model upload or new release package.
+
 ### 2026-10-04 — AI3, version remains 0.4.0
 
 - Added soft BiRefNet Lite background removal on the active pixel layer, preserving original pixels in an editable layer mask.

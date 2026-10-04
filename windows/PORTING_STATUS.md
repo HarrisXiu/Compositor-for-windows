@@ -34,7 +34,7 @@ AI1 from `42f4103` is now merged with this worktree's C1–C5; see the [integrat
 
 T1/T2 add free distortion, multi-layer/folder transforms, Move-tool dragging of every selected layer and Alt-drag duplication. See [delivery notes](T1-T2_REPORT.md). This does not complete mesh distort, S2 selection transforms or Mac reference comparison.
 
-S1/S3 are implemented and merged with T1/T2: polygonal lasso, cancellable disk expansion/contraction, selection masks and transactional color range. Combined with T1/T2, AI1–AI3, P1–P3 and X1/X2, thirteen CTest suites pass (384 tests, 20 optional/real-model cases skipped by default). Mask from Selection now upgrades older project versions. See [delivery notes](S1-S3_REPORT.md). S2 and AI editing interactions remain pending.
+S1/S3 are implemented and merged with T1/T2: polygonal lasso, cancellable disk expansion/contraction, selection masks and transactional color range. Combined with T1/T2, AI1–AI3, P1–P3 and X1/X2, thirteen regression suites pass (384 tests, 20 optional/real-model cases skipped by default). Mask from Selection now upgrades older project versions. See [delivery notes](S1-S3_REPORT.md). S2 and Mac reference comparison remain pending; AI2/AI3 editing interactions are integrated.
 
 P1–P3 complete the planned painting scope: smoothing and Shift lines, growing pixel/mask surfaces, clone sampling, document-space gradients and color fills. See [delivery notes](P1-P3_REPORT.md) for regression evidence, memory limits and remaining performance/visual acceptance.
 
@@ -43,3 +43,5 @@ X1/X2 implement inline text editing, native IME events, paragraph-frame gestures
 AI2 is implemented and merged: BiRefNet Lite subject selection and SAM 2/MobileSAM canvas point selection, transactional preview/cancel/undo and stale-result protection. CPU and Intel DirectML real-model/editor checks pass; see [AI2 verification](AI2_README.md). AI3 is implemented below; Mac/ground-truth quality acceptance remains pending.
 
 AI3 is implemented and merged: BiRefNet Lite soft layer masks, tiled guided refinement, contrast/edge shift, reusable inference and cancellable preview/full-resolution commit. Its own report records CPU/Intel three-image real-editor checks. See [AI3 verification](AI3_README.md). Existing mask placement is baked into the layer grid and the result becomes linked; original pixels and undo snapshots are retained.
+
+The [2026-10-04 combined acceptance](ACCEPTANCE_REPORT_2026-10-04.md) verifies all of today's functional branch tips are ancestors of `the-one-for-windows`. It records fresh unified regressions, explicit optional checks, native Windows interaction and model/reference tests. Build targets now deploy the native Schannel TLS plugin beside the AI runtime, and transform screenshot assertions account for Windows display scaling. Historical stage counts above describe their original snapshots.

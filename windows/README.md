@@ -126,7 +126,7 @@ Original Compositor and the Windows port are MIT licensed. Qt is dynamically lin
 
 See [C1–C5 delivery notes](C1-C5_REPORT.md) for this step’s scope and validation. Application version remains 0.4.0; `.comp` remains 11.
 
-See the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification; the current thirteen-suite build also includes T1/T2, S1/S3, P1–P3, X1/X2, AI2 and AI3 (384 tests pass, 20 real-model or benchmark cases skip by default). The offline self-test launcher and delivery tooling include the canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites.
+See the [combined acceptance report](ACCEPTANCE_REPORT_2026-10-04.md) for current all-branch verification, the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification. The current thirteen-suite build also includes T1/T2, S1/S3, P1–P3, X1/X2, AI2 and AI3 (384 tests pass, 20 real-model or benchmark cases skip by default and are checked separately in the acceptance report). The offline self-test launcher and delivery tooling include the canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites. AI application/test targets deploy Qt's native Schannel TLS backend beside the executable, so HTTPS does not require an external OpenSSL installation.
 
 See [P1–P3 delivery notes](P1-P3_REPORT.md) for painting expansion, clone/gradient/fill verification and remaining memory/performance/visual acceptance.
 

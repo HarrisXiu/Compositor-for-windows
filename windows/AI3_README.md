@@ -2,6 +2,8 @@
 
 ## 当前结果
 
+AI3 已合入 `the-one-for-windows`，与今天其他功能分支的统一验收见 [2026-10-04 报告](ACCEPTANCE_REPORT_2026-10-04.md)。以下分支基线与十一组测试记录独立开发阶段。
+
 `codex/ai3` 基于 AI2 提交 `0fdb5de`，完成 BiRefNet Lite 背景移除和引导滤波精细模式。版本仍为 0.4.0，`.comp` 格式仍为 11；只写入原有图层蒙版字段，不新增文件格式。原始图层像素、文字/形状元数据和变换保持不变。
 
 模型、运行库和许可沿用 AI1/AI2：FP32 BiRefNet Lite、固定大小/SHA256、完整许可校验、后台执行与取消。应用运行不需要 Python。GPU 仍只支持受支持的 Intel 核显 DirectML，其他显卡使用 CPU；NVIDIA CUDA 留待后续。
@@ -62,4 +64,4 @@ $env:COMPOSITOR_AI_SELECTION_PROVIDER = 'cpu' # 或 dml，强制受支持的 Int
 .\build\Release\compositor_ai_background_tests.exe realBackground -o artifacts/ai3-real-tests.txt,txt
 ```
 
-后续仍包括人工抠图质量/Mac 对照、更多 Intel 设备、无 DX12 GPU 实机回退、NVIDIA CUDA、模型正式下载和便携包发布验收。本轮不推送、不合入主分支、不创建 Release 或上传资产。
+后续仍包括人工抠图质量/Mac 对照、更多 Intel 设备、无 DX12 GPU 实机回退、NVIDIA CUDA、模型正式下载和便携包发布验收。独立 AI3 开发阶段未推送、合入或上传资产；当前合入状态以统一报告为准。

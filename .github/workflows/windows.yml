@@ -19,16 +19,6 @@ jobs:
           $taskSevenZip = (Get-Command 7z.exe -ErrorAction Stop).Source
           python -m aqt --config .github/aqt.ini install-qt windows desktop 6.10.2 win64_msvc2022_64 --outputdir .cache/Qt --external $taskSevenZip --archives qtbase qtsvg --modules qtimageformats
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build, test and package
+      - name: Build and test
         shell: pwsh
-        run: ./windows/build.ps1 -Package
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Compositor-Windows-x64
-          path: artifacts/Compositor-Windows-x64.zip
-      # Qt's corresponding source, to publish beside the ZIP on a release (LGPLv3).
-      - uses: actions/upload-artifact@v7
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          name: Qt-6.10.2-source
-          path: artifacts/qt-source/
+        run: ./windows/build.ps1
