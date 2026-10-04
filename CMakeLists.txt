@@ -198,6 +198,10 @@ if(BUILD_TESTING)
     list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests)
 endif()
 foreach(target ${COMPOSITOR_AI_RUNTIME_TARGETS})
+    if(MSVC)
+        # ONNX Runtime also narrows model paths internally; keep them independent of the system locale.
+        target_sources(${target} PRIVATE windows/utf8.manifest)
+    endif()
     # Use Windows TLS without requiring an external OpenSSL installation.
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/tls"

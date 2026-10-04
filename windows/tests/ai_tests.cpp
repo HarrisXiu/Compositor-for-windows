@@ -1,7 +1,11 @@
 #include "ai_session.h"
 #include "ai_preprocess.h"
 #include "ai_sam.h"
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <cmath>
@@ -18,11 +22,16 @@ class AiTests : public QObject {
   private slots:
     void initTestCase() {
         QVERIFY(directory_.isValid());
-        model_ = directory_.filePath(QString::fromUtf8("模型.onnx"));
+        const auto modelDirectory = directory_.filePath(QString::fromUtf8("模型目录-モデル-🧪"));
+        QVERIFY(QDir().mkpath(modelDirectory));
+        model_ = QDir(modelDirectory).filePath(QString::fromUtf8("模型-モデル-🧪.onnx"));
         QFile file(model_);
         QVERIFY(file.open(QIODevice::WriteOnly));
         const auto bytes = QByteArray::fromBase64("CAk6mAEKFwoBeAoFc2NhbGUSBnNjYWxlZCIDTXVsChYKBnNjYWxlZAoEYmlhcxIBeSIDQWRkEgphaV9maXh0dXJlKg8QAUIFc2NhbGVKBAAAAEAqDhABQgRiaWFzSgQAAIA/WhsKAXgSFgoUCAESEAoCCAEKAggDCgIIAgoCCAJiGwoBeRIWChQIARIQCgIIAQoCCAMKAggCCgIIAkIECgAQEQ==");
         QCOMPARE(file.write(bytes), bytes.size());
+    }
+    void utf8ProcessCodePage() {
+        QCOMPARE(GetACP(), UINT(CP_UTF8));
     }
     void directMLSupportScope() {
         AiAdapter intel{0, "Intel integrated", 0x8086, 0, true, false, true};
@@ -77,6 +86,24 @@ class AiTests : public QObject {
         QCOMPARE(output.size(), values.size());
         for (int i = 0; i < output.size(); ++i)
             QCOMPARE(output[i], values[i] * 2 + 1);
+    }
+    void profilingWithUnicodePath() {
+        AiOptions options;
+        options.policy = AiProviderPolicy::CpuOnly;
+        options.profilePrefix = QFileInfo(model_).dir().filePath(QString::fromUtf8("推理-プロファイル-🧪"));
+        auto session = AiSession::open(model_, options);
+        auto result = session->run({AiTensor::floats("x", {1, 3, 2, 2}, QVector<float>(12, 3))});
+        QCOMPARE(result.outputs.first().floatValues().first(), 7.0f);
+        const auto path = session->finishProfiling();
+        QVERIFY(path.startsWith(options.profilePrefix));
+        QFile profile(path);
+        QVERIFY(profile.open(QIODevice::ReadOnly));
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(profile.readAll(), &error);
+        QCOMPARE(error.error, QJsonParseError::NoError);
+        QVERIFY(document.isArray());
+        QVERIFY(!document.array().isEmpty());
+        QVERIFY(session->finishProfiling().isEmpty());
     }
     void nonfiniteCpuOutput_data() {
         QTest::addColumn<float>("value");

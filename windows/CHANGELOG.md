@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 2026-10-04 — Unicode model paths on CI, version remains 0.4.0
+
+- Reproduced the ONNX Runtime initialization crash with an emoji model filename on a legacy Chinese ANSI code page; the English GitHub runner cannot represent the original Chinese fixture either.
+- Embedded a UTF-8 process manifest in the application, AI probe and AI-linked tests. Wide model paths remain intact; model loading and profiling no longer depend on the legacy system code page. Windows 10 version 1903 or later is required for this setting.
+- Added process-code-page and Unicode profiling regressions, and extended the model fixture to a Chinese/Japanese/emoji directory and filename. Full Release build and 13/13 CTest suites pass; the default QtTest total increases to 386 with 20 opt-in skips.
+
 ### 2026-10-04 — combined acceptance, version remains 0.4.0
 
 - Verified today's AI1–AI3, T1/T2, S1/S3, P1–P3 and X1/X2 branches are integrated with the existing L/R/C work; see [combined acceptance](ACCEPTANCE_REPORT_2026-10-04.md).

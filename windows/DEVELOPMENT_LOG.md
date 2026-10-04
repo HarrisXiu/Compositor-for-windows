@@ -2,6 +2,12 @@
 
 ## 2026-10-04
 
+### 推送后的 CI Unicode 路径修复
+
+GitHub Windows CI 在 ONNX Runtime 初始化时抛出“目标多字节代码页无法映射 Unicode”异常，AI 组崩溃，其余十二组通过。此前本地 ACP 936 可以表示中文文件名，初次验收未发现英文系统代码页差异。将夹具加入 emoji 后，本机成功复现相同异常，保留失败日志。
+
+为应用、AI 探针和所有 AI 关联测试嵌入 Windows 进程 UTF-8 清单，继续使用宽字符模型路径，不删除 Unicode 测试、不修改系统语言或控制台编码。新增进程代码页与 Unicode 性能日志用例，模型目录/文件名覆盖中文、日文与 emoji；修复后通过。Windows 10 的最低支持版本明确为 1903，应用版本和 `.comp` 版本保持不变。完整 Release 构建、13/13 CTest 与干净 PATH 启动通过；AI 默认 18 通过、2 项可选跳过，统一默认计数变为 386 通过、20 项可选跳过。证据保存在 `artifacts/ci-unicode-20261004/`，当前远端结果不再沿用初次本地通过结论，见 [报告中的 CI 跟进](ACCEPTANCE_REPORT_2026-10-04.md#ci-unicode-路径跟进)。
+
 ### 当天全部分支统一验收
 
 核对 `ai1-runtime`、`codex/ai2`、`codex/ai3`、`codex/s1-s3`、`codex/p1-p3-painting`、`codex/x1-x2-text-shapes` 和 T1/T2 提交，均已进入 `the-one-for-windows`；此前 R2–R4 也在主分支历史中。下面各开发阶段的“未合入/未推送”是当时状态，当前状态与验证以 [统一验收报告](ACCEPTANCE_REPORT_2026-10-04.md) 为准。

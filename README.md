@@ -1,6 +1,6 @@
 # Compositor for Windows
 
-**Windows 移植版尚未完全完成，后续将持续更新。** 当前版本为 **0.4.0 预览版**，目标平台为 Windows 10/11 x64。
+**Windows 移植版尚未完全完成，后续将持续更新。** 当前版本为 **0.4.0 预览版**，目标平台为 Windows 10（1903 或更新版本）/11 x64。
 
 本项目基于 [robbietilton/Compositor](https://github.com/robbietilton/Compositor)，将原有 macOS 图像合成与照片编辑流程移植到 Windows。Windows 应用采用 **C11、C++20 和 Qt 6 Widgets**，复用原项目的 C 像素算法。原 macOS 源码仍保留在仓库中。
 
@@ -36,7 +36,7 @@
 | 浮动选区与选区变换（S2） | 待开发 |
 | 高级工具、格式兼容与正式发布 | 继续开发和验收 |
 
-合并 T1/T2、S1/S3、P1–P3、X1/X2 和 AI1–AI3 后，统一 13 组测试全部通过（384 项通过、0 失败；另有 20 项需要真实模型或基准数据的用例默认跳过），覆盖原有编辑功能、画布交互、变换、选区、绘画、文字与形状、AI 推理与模型管理；变换见 [T1/T2 交付说明](windows/T1-T2_REPORT.md)，文字与形状见 [X1/X2 交付记录](windows/X1-X2_REPORT.md)，绘画见 [P1–P3 交付记录](windows/P1-P3_REPORT.md)，AI 基础层见 [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md)。完整 Mac 功能与视觉一致性仍需验收。
+合并 T1/T2、S1/S3、P1–P3、X1/X2 和 AI1–AI3 并修复 CI Unicode 路径问题后，统一 13 组测试全部通过（386 项通过、0 失败；另有 20 项需要模型、硬件、网络或基准数据的用例默认跳过），覆盖原有编辑功能、画布交互、变换、选区、绘画、文字与形状、AI 推理与模型管理；变换见 [T1/T2 交付说明](windows/T1-T2_REPORT.md)，文字与形状见 [X1/X2 交付记录](windows/X1-X2_REPORT.md)，绘画见 [P1–P3 交付记录](windows/P1-P3_REPORT.md)，AI 基础层见 [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md)。完整 Mac 功能与视觉一致性仍需验收。
 
 2026-10-04 已核对当天全部功能分支的合入状态，并重新执行统一回归及可选实图检查；结果与验收边界见 [统一验收报告](windows/ACCEPTANCE_REPORT_2026-10-04.md)。历史分支报告中的“未合入”描述保留当时状态，以统一报告为准。
 

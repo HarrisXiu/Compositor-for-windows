@@ -4,6 +4,18 @@
 
 本次验收确认当前已实现范围的整合与回归，不代表整个移植或 Mac 功能、视觉一致性已经完成。推送交付为源码与文档，不包含 `artifacts/`、缓存、模型、编译产物或便携 ZIP；CI 只构建与测试，不自动上传软件包。
 
+## CI Unicode 路径跟进
+
+初次推送 `7124ca3` 后，GitHub Runner 的十三组测试有一组 AI 失败：ONNX Runtime 初始化抛出 `No mapping for the Unicode character exists in the target multi-byte code page`。以下原始 384 项记录是本地验收阶段结果，不代表该次远端 CI 已通过。
+
+本机进程 ACP 为 936，原来的中文模型文件名恰好能表示；在英文系统代码页上则失败。将模型文件名加入 emoji 后，在本机复现相同异常并保留日志。CMake 现向应用、AI 探针与全部 AI 关联测试嵌入 `windows/utf8.manifest`，将进程代码页设为 UTF-8。模型仍通过宽字符路径加载，不复制大模型到临时文件，也不删掉 Unicode 测试。此设置要求 Windows 10 1903 或更新版本，见 [Microsoft 文档](https://learn.microsoft.com/en-us/windows/apps/design/globalizing/use-utf8-code-page)。
+
+新增进程 ACP=65001 与 Unicode profiling 回归，模型目录/文件名使用中文、日文和 emoji；profiling 文件路径回读及 JSON 完整性也检查。修复后目标用例 5/5 通过，AI 默认全组 **18 通过、0 失败、2 项可选跳过**。重新构建全部 Release 目标、运行 **13/13 CTest** 与干净 PATH 启动通过；统一默认计数更新为 **386 通过、0 失败、20 项可选跳过**。模型权重、应用版本 0.4.0 与格式 11 均未改变。
+
+另在两个独立进程显式执行 Unicode 模型路径下的 Intel 非有限输出与设备丢失回退，各 3/3 通过、无跳过。使用 SDK `mt.exe` 提取并检查应用、探针与九个关联测试的实际内嵌清单，十一份均包含 UTF-8 配置，而非只检查源文件。
+
+此次失败复现、修复后日志及提取的 EXE 内嵌清单位于忽略的 `artifacts/ci-unicode-20261004/`。远端 CI 需要以修复提交的新运行结果为准，旧失败记录保留。
+
 ## 全部分支核对
 
 下列分支末端或任务提交均为验收基线的祖先，已合入主分支，无需重复合并。独立 AI2、AI3、S1/S3 工作树检查时没有遗漏的未提交修改。以前的分支报告保留其开发阶段结果；其中“未合入/未推送”不再描述当前主分支。

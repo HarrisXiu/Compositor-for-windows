@@ -6,7 +6,7 @@
 
 ## Run
 
-Extract **the entire** `Compositor-Windows-x64.zip` archive and run `Compositor.exe` in that folder. Keep the DLLs and plugin folders beside the executable. Target: Windows 10/11 x64. This portable preview does not install file associations. Automatic updating is deliberately excluded from the Windows port: there is no update checker, download service or updater in the Windows build.
+Extract **the entire** `Compositor-Windows-x64.zip` archive and run `Compositor.exe` in that folder. Keep the DLLs and plugin folders beside the executable. Target: Windows 10 version 1903 or later / Windows 11 x64. This portable preview does not install file associations. Automatic updating is deliberately excluded from the Windows port: there is no update checker, download service or updater in the Windows build.
 
 Use **Help > Open Demo** to try an editable layered document immediately, or import your own images with `Ctrl+I`.
 
@@ -126,7 +126,7 @@ Original Compositor and the Windows port are MIT licensed. Qt is dynamically lin
 
 See [C1–C5 delivery notes](C1-C5_REPORT.md) for this step’s scope and validation. Application version remains 0.4.0; `.comp` remains 11.
 
-See the [combined acceptance report](ACCEPTANCE_REPORT_2026-10-04.md) for current all-branch verification, the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification. The current thirteen-suite build also includes T1/T2, S1/S3, P1–P3, X1/X2, AI2 and AI3 (384 tests pass, 20 real-model or benchmark cases skip by default and are checked separately in the acceptance report). The offline self-test launcher and delivery tooling include the canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites. AI application/test targets deploy Qt's native Schannel TLS backend beside the executable, so HTTPS does not require an external OpenSSL installation.
+See the [combined acceptance report](ACCEPTANCE_REPORT_2026-10-04.md) for current all-branch verification, the [development log](DEVELOPMENT_LOG.md) for historical stage results and the [AI1 integration report](AI1_INTEGRATION_REPORT.md) for historical AI1 verification. The current thirteen-suite build also includes T1/T2, S1/S3, P1–P3, X1/X2, AI2 and AI3 (386 tests pass, 20 opt-in cases skip by default and are checked separately in the acceptance report). The offline self-test launcher and delivery tooling include the canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites. AI application/test targets deploy Qt's native Schannel TLS backend beside the executable, so HTTPS does not require an external OpenSSL installation. Their embedded UTF-8 process manifests preserve Chinese, Japanese and emoji model/profiling paths independently of the machine's legacy ANSI code page; changing the console code page is not required.
 
 See [P1–P3 delivery notes](P1-P3_REPORT.md) for painting expansion, clone/gradient/fill verification and remaining memory/performance/visual acceptance.
 
