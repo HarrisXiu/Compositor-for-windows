@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 2026-10-04 — AI1 integration, version remains 0.4.0
+
+- Merged AI1's C++ inference/model management with the existing C1–C5 editor, preserving canvas interactions, customizable shortcuts and Chinese/Japanese catalogs.
+- Unified nine CTest suites, including AI/model and canvas tests; deployed ONNX Runtime/DirectML/Qt Network beside the canvas executable as well as other UI consumers.
+- Added an integration regression for both AI-model and keyboard-shortcut menu registration under Chinese/Japanese translation. Extended offline self-test delivery to include the canvas suite.
+- Retained the Intel-integrated-only DirectML scope, CPU fallback and unpublished model endpoints. AI editing interactions remain pending; model weights/cache/artifacts remain outside Git.
+- Updated the README and migration status; preserved the previous AI1 package/report as historical evidence. See [integration verification](AI1_INTEGRATION_REPORT.md). No complete ZIP was regenerated or published.
+
 ### 2026-10-04 — T1/T2, version remains 0.4.0
 
 - Added Ctrl-drag free distortion of a layer or a group: the box's corners move freely and the pixels (and a linked mask) are resampled in perspective, or as two triangles for a folded shape, as one undo step.

@@ -23,14 +23,14 @@
 | 图层与裁剪尺寸操作（L1–L4） | 当前范围已完成 |
 | 渲染与大画布优化（R1–R4） | 已整合；目标硬件性能验收待完成 |
 | 画布交互、工具选项与快捷键（C1–C5） | 当前 Windows 工具范围已完成 |
-| 离线 AI 基础设施（AI1） | 主分支已有模型导出工具；独立 AI1 分支已完成 C++ 推理基础层与模型管理，尚未合入主工作区 |
+| 离线 AI 基础设施（AI1） | C++ 推理基础层与模型管理已合入；支持本地导入、离线缓存和 CPU 回退 |
 | 高级工具、格式兼容与正式发布 | 继续开发和验收 |
 
-主工作区七组本地 C/C++ 回归记录为 **238 项通过、0 失败、2 项可选基准跳过**。这些结果覆盖已实现功能，完整 Mac 功能与视觉一致性仍需验收。
+AI1 合入后，统一九组测试全部通过，覆盖原有编辑功能、画布交互、AI 推理与模型管理；本轮结果见 [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md)。完整 Mac 功能与视觉一致性仍需验收。
 
-外部 `Compositor-ai1` 子项目的当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI 主体/物体选区、边缘细化和去背景交互尚未完成。独立分支的测试结果与本地主工作区进度分别记录在 [开发日志](windows/DEVELOPMENT_LOG.md)。
+AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI 主体/物体选区、边缘细化和去背景交互尚未完成。通过 **帮助 > AI 模型…** 导入匹配的本地模型；正式模型地址尚未发布，下载入口暂不启用。使用与支持范围见 [AI1 说明](windows/AI1_README.md)。
 
-后续重点是合入 AI1 基础设施，完善高级变换、画布内文字编辑和高级选区，扩大真实文件与硬件测试，再完成跨平台对照和发布验收。详细任务见 [移植进度](windows/PORTING_STATUS.md)。
+后续重点是完善高级变换、画布内文字编辑、高级选区和 AI 编辑交互，扩大真实文件与硬件测试，再完成跨平台对照和发布验收。详细任务见 [移植进度](windows/PORTING_STATUS.md)。
 
 ## 构建与使用
 
@@ -45,6 +45,7 @@
 ## 文档
 
 - [开发日志：2026-10-03，含外部 AI1 子项目](windows/DEVELOPMENT_LOG.md)
+- [AI1 整合报告](windows/AI1_INTEGRATION_REPORT.md) · [AI1 使用说明](windows/AI1_README.md)
 - [版本变更记录](windows/CHANGELOG.md)
 - [移植进度与待办](windows/PORTING_STATUS.md)
 - [L1–L4 交付记录](windows/L1-L4_REPORT.md) · [C1–C5 交付记录](windows/C1-C5_REPORT.md)

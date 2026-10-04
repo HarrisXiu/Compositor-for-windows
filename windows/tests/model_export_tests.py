@@ -10,6 +10,26 @@ from export_models import compare_tensor, compare_mask, deform_conv_export, run
 
 
 class ModelExportTests(unittest.TestCase):
+    def test_sam2_nested_shape_normalization_preserves_graph(self):
+        import onnx
+        from normalize_ai_encoder import normalize_sam2_shapes
+        helper = onnx.helper
+        name = "/image_encoder/trunk/Concat_3_output_0"
+        branch = helper.make_graph([helper.make_node("Identity", ["x"], [name])], "branch", [],
+                                  [helper.make_tensor_value_info(name, onnx.TensorProto.INT64, [5])])
+        graph = helper.make_graph([helper.make_node("If", ["condition"], ["y"], then_branch=branch, else_branch=branch)],
+                                  "outer", [], [])
+        model = helper.make_model(graph)
+        nodes = [node.SerializeToString() for node in model.graph.node[0].attribute[0].g.node]
+        self.assertEqual(normalize_sam2_shapes(model), [name, name])
+        for attribute in model.graph.node[0].attribute:
+            self.assertFalse(attribute.g.output[0].type.tensor_type.HasField("shape"))
+            self.assertEqual([node.SerializeToString() for node in attribute.g.node], nodes)
+        self.assertEqual(normalize_sam2_shapes(model), [])
+        model.graph.node[0].attribute[0].g.output[0].type.tensor_type.shape.dim.add().dim_value = 6
+        with self.assertRaises(ValueError):
+            normalize_sam2_shapes(model)
+
     def test_identical_tensors_pass(self):
         result = compare_tensor(np.ones((2, 3), np.float32), np.ones((2, 3), np.float32))
         self.assertTrue(result["passed"])

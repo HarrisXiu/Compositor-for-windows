@@ -21,6 +21,7 @@ SOURCES = {
 }
 HF_MODELS = {
     "birefnet": ("ZhengPeng7/BiRefNet", "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4", "model.safetensors", "MIT"),
+    "birefnet-lite": ("ZhengPeng7/BiRefNet_lite", "aa62cd87eafb9cc43056d08ef3615a14628b831d", "model.safetensors", "MIT"),
     "sam2": ("facebook/sam2-hiera-tiny", "7c218beaf0bb87874785f32b582f640134fc1c09", "sam2_hiera_tiny.pt", "Apache-2.0"),
 }
 TENSOR_LIMITS = {"atol": 0.005, "rtol": 0.0001, "max_mismatch_fraction": 0.01}
@@ -155,7 +156,7 @@ def numpy_outputs(model, inputs):
     return [output.detach().cpu().numpy() for output in outputs]
 
 
-def export_graph(model, inputs, path, names, outputs, dynamic_axes=None, verify_only=False):
+def export_graph(model, inputs, path, names, outputs, dynamic_axes=None, verify_only=False, normalize_sam2=False):
     import onnx
     import onnxruntime as ort
     import torch
@@ -166,6 +167,11 @@ def export_graph(model, inputs, path, names, outputs, dynamic_axes=None, verify_
         print(f"Exporting {path.name}", flush=True)
         with torch.inference_mode():
             torch.onnx.export(model, inputs, str(path), opset_version=17, input_names=names, output_names=outputs, dynamic_axes=dynamic_axes, dynamo=False)
+        if normalize_sam2:
+            from normalize_ai_encoder import normalize_sam2_shapes
+            graph = onnx.load(str(path))
+            normalize_sam2_shapes(graph)
+            onnx.save(graph, str(path))
     onnx.checker.check_model(str(path), full_check=True)
     graph = onnx.load(str(path), load_external_data=False)
     if any(node.domain not in ("", "ai.onnx") for node in graph.graph.node):
@@ -201,7 +207,7 @@ def export_birefnet(args, images, report):
     from huggingface_hub import hf_hub_download
     from transformers import AutoModelForImageSegmentation
 
-    repo, revision, filename, license_name = HF_MODELS["birefnet"]
+    repo, revision, filename, license_name = HF_MODELS[args.model]
     checkpoint = hf_hub_download(repo, filename, revision=revision, cache_dir=str(args.cache / "huggingface"))
     report["source"] = {"repo": repo, "revision": revision, "license": license_name, "checkpoint_sha256": sha256(checkpoint), "license_code_revision": SOURCES["BiRefNet"][1]}
     retain_license(source("BiRefNet", args.cache) / "LICENSE", args.output, "LICENSE-BiRefNet.txt", report)
@@ -218,7 +224,7 @@ def export_birefnet(args, images, report):
 
     wrapper = LastMask(model).eval()
     sample = (square_input(load_rgb(images[0])),)
-    path = args.output / "birefnet.onnx"
+    path = args.output / (args.model + ".onnx")
     with lower_birefnet_deform(model):
         session = export_graph(wrapper, sample, path, ["image"], ["logits"], verify_only=args.verify_only)
     for image_path in images:
@@ -300,7 +306,7 @@ def export_sam(args, images, report):
     sample = (image_tensor(sample_image),)
     encoder_path = args.output / (args.model + "_encoder.onnx")
     decoder_path = args.output / (args.model + "_decoder.onnx")
-    encoder_session = export_graph(encoder, sample, encoder_path, ["image"], encoder_names, verify_only=args.verify_only)
+    encoder_session = export_graph(encoder, sample, encoder_path, ["image"], encoder_names, verify_only=args.verify_only, normalize_sam2=sam2)
     with torch.inference_mode():
         features = encoder(*sample)
     if isinstance(features, torch.Tensor):
@@ -344,7 +350,7 @@ def export_sam(args, images, report):
 
 def main():
     parser = argparse.ArgumentParser(description="Export pinned segmentation weights and verify FP32 ONNX against PyTorch on CPU")
-    parser.add_argument("--model", choices=["birefnet", "sam2", "mobilesam"], required=True)
+    parser.add_argument("--model", choices=["birefnet", "birefnet-lite", "sam2", "mobilesam"], required=True)
     parser.add_argument("--cache", type=Path, default=ROOT / ".cache")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--images", nargs="+", type=Path)
@@ -373,7 +379,7 @@ def main():
         report["images"] = [{"file": str(path.resolve()), "sha256": sha256(path)} for path in args.images]
         print(f"Output: {args.output}", flush=True)
         with torch.inference_mode():
-            if args.model == "birefnet":
+            if args.model.startswith("birefnet"):
                 export_birefnet(args, args.images, report)
             else:
                 export_sam(args, args.images, report)

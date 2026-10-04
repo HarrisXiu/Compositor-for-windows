@@ -626,5 +626,22 @@
   "Move selected pixels Down 10 px": "向下移动选中像素 10 像素",
   "Zoom": "缩放",
   "Restore Defaults": "恢复默认",
-  "Orientation": "方向"
+  "Orientation": "方向",
+  "AI Models": "AI 模型",
+  "Models run locally. Downloads are optional and SHA256 verified; installed models remain available offline.": "模型在本机运行。下载为可选操作，文件通过 SHA256 校验；已安装模型可离线使用。",
+  "The model release has not been published yet. Import matching local files; unpublished download URLs are not requested.": "模型发布包尚未发布。请导入与清单匹配的本地文件；不会请求未发布的下载地址。",
+  "Checking model cache…": "正在检查模型缓存…",
+  "Download / Resume": "下载／续传",
+  "Restart Download": "重新下载",
+  "Import Local Files": "导入本地文件",
+  "Cancel Transfer": "取消传输",
+  "Discard this model's partial download and start again?": "丢弃此模型已下载的部分并重新开始？",
+  "Downloading and verifying model component": "正在下载并校验模型组件",
+  "Cancelled. Partial downloads are preserved for Resume.": "已取消。保留部分下载文件，可稍后续传。",
+  "Importing and verifying local model files…": "正在导入并校验本地模型文件…",
+  "Model installed and verified.": "模型已安装并通过校验。",
+  "Cancelled.": "已取消。",
+  "Model is missing or its size/SHA256 check failed.": "模型尚未安装，或文件大小／SHA256 校验失败。",
+  "Model license files are missing or do not match the installed model.": "模型许可文件缺失或与已安装模型不匹配。",
+  "Installed and SHA256 verified. Available offline.": "已安装并通过 SHA256 校验，可离线使用。"
 }
