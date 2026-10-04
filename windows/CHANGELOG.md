@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### 2026-10-04 — follow-ups
+
+- Translated 30 more edit-history labels and messages (brush, clone, healing, import, layer and selection operations) for Simplified Chinese and Japanese, so Edit > Undo/Redo no longer shows them in English.
+- Fixed an intermittent crash when closing a window with unsaved edits: a destroyed page no longer notifies the window that is tearing it down.
+
 ### 2026-10-04 — S1/S3, version remains 0.4.0
 
 - Added polygonal lasso with vertex/closing previews, Backspace, apply/cancel and selection combination modes.

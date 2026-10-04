@@ -1139,6 +1139,23 @@ class UiTests : public QObject {
         delete page;
         QCOMPARE(notified, 0);
     }
+    // Edit > Undo shows "Undo " and the label an edit was recorded with.
+    void historyLabelsAreTranslated() {
+        const QStringList labels{"Add Layer Mask", "Blend Mode", "Blur Stroke", "Brush Stroke",
+                                 "Change Selection", "Clone Stamp", "Crop Canvas", "Delete Layers",
+                                 "Distort", "Distort Layers", "Duplicate Layers", "Flip Layer",
+                                 "Import Image", "Inverse Selection", "Layer Opacity", "Move Layers",
+                                 "New Layer", "Paint Mask", "Reorder Layers", "Spot Healing",
+                                 "Text Layer", "Transform Layers"};
+        for (const auto language : {"zh_CN", "ja_JP"}) {
+            UiLanguage::instance().setLanguage(language, false);
+            for (const auto &label : labels) {
+                QVERIFY2(UiLanguage::instance().text(label) != label,
+                         qPrintable(QString("%1 is untranslated in %2").arg(label, language)));
+                QVERIFY(UiLanguage::instance().text("Undo " + label) != "Undo " + label);
+            }
+        }
+    }
     void pixelGridAppearsAt800Percent() {
         auto d = Document::create({16, 16});
         QImage white(16, 16, QImage::Format_RGBA8888_Premultiplied);
