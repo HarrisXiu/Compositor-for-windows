@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "demo.h"
+#include "ai_models_dialog.h"
 #include "editor.h"
 #include "filters.h"
 #include "language.h"
@@ -363,6 +364,10 @@ void EditorWindow::buildMenus() {
                                          ? "No conversions were required for this import."
                                          : page()->importNotes.join("\n\n"));
     });
+    action(help, "AI Models…", {}, [this] {
+        AiModelsDialog dialog(this);
+        dialog.exec();
+    })->setObjectName("aiModelsAction");
     action(help, "Open Demo", {}, [this] { addPage(createDemoDocument()); });
     action(help, "About This Preview", {}, [this] {
         QMessageBox::information(

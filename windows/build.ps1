@@ -36,7 +36,8 @@ if (-not $LibRawRoot) {
         Expand-Archive -LiteralPath $taskLibRawArchive -DestinationPath (Split-Path -Parent $LibRawRoot) -Force
     }
 }
-& $taskCMake -S $taskProjectRoot -B $taskBuildRoot -A x64 "-DCMAKE_PREFIX_PATH=$QtRoot" "-DCOMPOSITOR_LIBRAW_ROOT=$LibRawRoot" -DBUILD_TESTING=ON
+$taskAiSdk = & (Join-Path $PSScriptRoot 'fetch-onnx-runtime.ps1')
+& $taskCMake -S $taskProjectRoot -B $taskBuildRoot -A x64 "-DCMAKE_PREFIX_PATH=$QtRoot" "-DCOMPOSITOR_LIBRAW_ROOT=$LibRawRoot" "-DCOMPOSITOR_ONNX_ROOT=$($taskAiSdk.OnnxRuntimeRoot)" "-DCOMPOSITOR_DML_ROOT=$($taskAiSdk.DirectMLRoot)" -DBUILD_TESTING=ON
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 & $taskCMake --build $taskBuildRoot --config $Configuration --parallel 4
 if ($LASTEXITCODE -ne 0) { throw 'C++ build failed.' }
@@ -61,20 +62,26 @@ try {
         if (Test-Path -LiteralPath $taskPackagePath) { Remove-Item -LiteralPath $taskPackagePath -Recurse -Force }
         New-Item -ItemType Directory -Path $taskPackagePath -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $taskBuildRoot "$Configuration\Compositor.exe") -Destination $taskPackagePath -Force
+        Copy-Item -LiteralPath (Join-Path $taskBuildRoot "$Configuration\compositor_ai_probe.exe") -Destination $taskPackagePath -Force
         Copy-Item -LiteralPath (Join-Path $LibRawRoot 'bin\libraw.dll') -Destination $taskPackagePath -Force
         $taskThirdPartySource = Join-Path $taskPackagePath 'third-party-source'
         New-Item -ItemType Directory -Path $taskThirdPartySource -Force | Out-Null
         if (-not (Test-Path -LiteralPath $taskLibRawArchive)) { throw 'Include the matching LibRaw source archive for redistribution.' }
         Copy-Item -LiteralPath $taskLibRawArchive -Destination $taskThirdPartySource -Force
-        # generic (TUIO touch) is the only plugin that pulls in Qt Network, along with tls and networkinformation.
-        & (Join-Path $QtRoot 'bin\windeployqt.exe') --release --no-translations --compiler-runtime --no-opengl-sw --skip-plugin-types generic,networkinformation,tls $taskPackagePath
+        # Deploy Qt Network and Schannel TLS for optional HTTPS model downloads.
+        & (Join-Path $QtRoot 'bin\windeployqt.exe') --release --no-translations --compiler-runtime --no-opengl-sw --skip-plugin-types generic,networkinformation --include-plugins qschannelbackend $taskPackagePath
         if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed.' }
         # Qt Core imports Windows' own ICU (System32, Windows 10 1703 and later); that copy is an OS file, not ours to redistribute.
         foreach ($taskIcuName in @('icu.dll','icuuc.dll','icuin.dll')) {
             $taskIcu = Join-Path $taskPackagePath $taskIcuName
             if (Test-Path -LiteralPath $taskIcu) { Remove-Item -LiteralPath $taskIcu -Force }
         }
-        if (Test-Path -LiteralPath (Join-Path $taskPackagePath 'Qt6Network.dll')) { throw 'Qt Network was deployed but the application does not use it.' }
+        foreach ($taskAiRuntime in @('onnxruntime.dll','onnxruntime_providers_shared.dll','DirectML.dll')) {
+            Copy-Item -LiteralPath (Join-Path $taskBuildRoot "$Configuration\$taskAiRuntime") -Destination $taskPackagePath -Force
+        }
+        foreach ($taskNetworkFile in @('Qt6Network.dll','tls\qschannelbackend.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $taskPackagePath $taskNetworkFile))) { throw "Missing HTTPS runtime: $taskNetworkFile" }
+        }
         if (-not $taskVsRoot) {
             $taskVswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
             if (Test-Path -LiteralPath $taskVswhere) { $taskVsRoot = & $taskVswhere -products '*' -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
@@ -89,6 +96,9 @@ try {
         }
         Copy-Item -LiteralPath (Join-Path $taskProjectRoot 'LICENSE') -Destination (Join-Path $taskPackagePath 'LICENSE-Compositor.txt') -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $taskPackagePath 'README.md') -Force
+        foreach ($taskAiDocument in @('AI1_REPORT.md','AI1_SELF_TEST.md')) {
+            Copy-Item -LiteralPath (Join-Path $PSScriptRoot $taskAiDocument) -Destination $taskPackagePath -Force
+        }
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'PORTING_STATUS.md') -Destination $taskPackagePath -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CHANGELOG.md') -Destination $taskPackagePath -Force
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'ARCHITECTURE.md') -Destination $taskPackagePath -Force
@@ -100,6 +110,15 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $taskPackagePath -Recurse -Force
         Copy-Item -LiteralPath (Join-Path $LibRawRoot 'LICENSE.CDDL') -Destination (Join-Path $taskPackagePath 'licenses\LibRaw-CDDL-1.0.txt') -Force
         Copy-Item -LiteralPath (Join-Path $LibRawRoot 'COPYRIGHT') -Destination (Join-Path $taskPackagePath 'licenses\LibRaw-COPYRIGHT.txt') -Force
+        foreach ($taskLicense in @(
+            @{ Root = $taskAiSdk.OnnxRuntimeRoot; File = 'LICENSE'; Name = 'ONNX-Runtime-MIT.txt' },
+            @{ Root = $taskAiSdk.OnnxRuntimeRoot; File = 'ThirdPartyNotices.txt'; Name = 'ONNX-Runtime-ThirdPartyNotices.txt' },
+            @{ Root = $taskAiSdk.DirectMLRoot; File = 'LICENSE.txt'; Name = 'DirectML-LICENSE.txt' },
+            @{ Root = $taskAiSdk.DirectMLRoot; File = 'LICENSE-CODE.txt'; Name = 'DirectML-CODE-LICENSE.txt' },
+            @{ Root = $taskAiSdk.DirectMLRoot; File = 'ThirdPartyNotices.txt'; Name = 'DirectML-ThirdPartyNotices.txt' }
+        )) {
+            Copy-Item -LiteralPath (Join-Path $taskLicense.Root $taskLicense.File) -Destination (Join-Path $taskPackagePath "licenses\$($taskLicense.Name)") -Force
+        }
         $taskSbom = Join-Path $QtRoot 'sbom'
         if (Test-Path -LiteralPath $taskSbom) { Copy-Item -LiteralPath $taskSbom -Destination $taskPackagePath -Recurse -Force }
         # Qt's source is published beside the release (not inside the ZIP); its license texts go in the package.
@@ -139,7 +158,7 @@ try {
         $taskList | Set-Content -LiteralPath (Join-Path $taskPackagePath 'licenses\Qt-third-party-components.txt') -Encoding utf8
         $taskQtVersion = & (Join-Path $QtRoot 'bin\qmake.exe') -query QT_VERSION
         $taskAppVersion = (Select-String -LiteralPath (Join-Path $taskProjectRoot 'CMakeLists.txt') -Pattern 'project\(CompositorWindows VERSION ([^ ]+)').Matches.Groups[1].Value
-        "Compositor version: $taskAppVersion`nQt version: $taskQtVersion`nLibRaw version: 0.22.2`nArchitecture: x64`nConfiguration: Release" | Set-Content -LiteralPath (Join-Path $taskPackagePath 'BUILD-INFO.txt') -Encoding utf8
+        "Compositor version: $taskAppVersion`nQt version: $taskQtVersion`nLibRaw version: 0.22.2`nONNX Runtime DirectML: 1.24.4`nDirectML: 1.15.4`nArchitecture: x64`nConfiguration: Release" | Set-Content -LiteralPath (Join-Path $taskPackagePath 'BUILD-INFO.txt') -Encoding utf8
         Compress-Archive -LiteralPath $taskPackagePath -DestinationPath (Join-Path $taskArtifactRoot 'Compositor-Windows-x64.zip') -Force
         Write-Output "Portable application: $taskPackagePath\Compositor.exe"
     }

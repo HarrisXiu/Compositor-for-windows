@@ -1,0 +1,30 @@
+# AI1 GPU 定位复测
+
+这是用于已有 AI1-self-test 的小型诊断包，不含模型，不修改原包或之前的结果。新版可自动识别多套一层目录的解压方式，也可与原包放在同级。
+
+1. 把新版 AI1-gpu-retest.zip 带到原测试电脑，解压到本地；原来的完整模型包也需要保留。
+2. 接通电源，关闭游戏、模拟器和其他 GPU 计算程序。双击新版 run-gpu-retest.cmd。
+3. 脚本自动查找附近的原包；找不到时会弹出文件夹选择框。选择包含 bin、models、references、SHA256SUMS.json 的文件夹，或其外层 AI1-self-test 目录。
+4. 带回原包目录中新生成的 gpu-retest-日期时间.zip。
+
+例如原包位于 G:/AI1-self-test/AI1-self-test，新工具位于 G:/AI1-gpu-retest，也能自动定位。无需手工移动模型、改目录名或编辑脚本。启动时会打印实际使用的原包路径。
+
+无需联网、安装软件或管理员权限。首次运行会把原包中已校验的 DLL 复制到探针旁边，避免 Windows 系统中的旧版 ONNX Runtime 抢先加载。当前只测受支持的 Intel 核显 DirectML 适配器；NVIDIA/AMD 已退出此工具的 GPU 范围，无 Intel 核显时请使用完整包验证 CPU 回退。约需数分钟，失败后的定位检查可能延长时间。
+
+原 results-20261003-180958：基础测试和 CPU 132/132 通过；Ryzen 7800X3D 的 Lite 九次平均约 3.9 秒/图。RTX 4070 SUPER 的 SAM 2/MobileSAM 通过；BiRefNet/Lite 有严重误差。AMD 核显完整 BiRefNet 出现 0x887A0006，后续模型当时未执行。通用算子诊断也失败。根因尚未确认。
+
+新版逐模型启动独立进程，先测 Lite/SAM，最后测完整 BiRefNet；错误不会阻止其他模型运行。BiRefNet 每图运行三次，每次都检查输出。失败时补测通用算子、倒序图片、单图独立会话和自动 CPU 回退；原始失败仍计入最终状态。探针在推理前后检查 DirectML/D3D12 设备状态，设备失败时明确报错，prefer 模式尝试 CPU 回退。该保护不能保证检出所有数值错误，精度问题需以新报告为准。
+
+仅测某个适配器：
+~~~powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\gpu-retest.ps1 -AdapterIndex 1
+~~~
+
+也可以在 PowerShell 中指定模型：
+~~~powershell
+.\gpu-retest.ps1 -AdapterIndex 1 -Models birefnet-lite,sam2,mobilesam
+~~~
+
+索引以新生成的 adapters.json 为准。报告包含硬件/驱动、模型哈希、每次误差、GPU Profiler、耗时和本轮系统 GPU 恢复事件；读取不到事件时记录原因。报告 ZIP 不含模型/参考张量，也不会上传。
+
+测试维持原来的误差、IoU 和概率阈值；通过诊断路径不能覆盖默认失败。本轮是问题定位，并非完整 AI1 验收。
