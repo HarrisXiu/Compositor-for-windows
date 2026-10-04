@@ -2,6 +2,7 @@
 #include "editor.h"
 #include "filters.h"
 #include "language.h"
+#include "paint_surface.h"
 #include "photoshop.h"
 #include "raw_dialog.h"
 #include "render.h"
@@ -248,15 +249,20 @@ void EditorWindow::fillSelection(bool erase, bool background) {
     auto l = p->document.active();
     const bool mask = p->canvas->paintMask();
     require(l && !(mask ? l->mask : l->image).isNull(), "Select a pixel layer or mask");
-    Layer target = *l;
-    if (mask) {
-        target.image = l->mask;
-        if (l->metadata.value("maskPlacement").isObject())
-            target.metadata["transform"] = l->metadata["maskPlacement"];
-    }
-    auto coverage = p->canvas->selectionForLayer(target);
+    const auto area = p->session.selection.isNull() ? QRect(QPoint(), p->document.size())
+                                                   : p->canvas->selectionBounds();
+    if (area.isEmpty())
+        return;
     p->edit(erase ? "Clear Pixels" : "Fill Selection", [&](Document &d) {
         auto layer = d.active();
+        if (mask)
+            preparePaintMask(*layer);
+        auto target = paintTarget(*layer, mask);
+        if (!erase) {
+            growPaintSurface(*layer, mask, paintSurfaceBounds(target, area));
+            target = paintTarget(*layer, mask);
+        }
+        auto coverage = p->canvas->selectionForLayer(target);
         auto original = (mask ? layer->mask : layer->image)
                             .convertToFormat(QImage::Format_RGBA8888_Premultiplied);
         auto image = original;

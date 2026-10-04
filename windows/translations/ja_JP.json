@@ -643,5 +643,11 @@
   "Cancelled.": "キャンセルしました。",
   "Model is missing or its size/SHA256 check failed.": "モデルがないか、サイズ／SHA256 検証に失敗しました。",
   "Model license files are missing or do not match the installed model.": "モデルのライセンスファイルがないか、一致しません。",
-  "Installed and SHA256 verified. Available offline.": "インストール・SHA256 検証済み。オフラインで使用できます。"
+  "Installed and SHA256 verified. Available offline.": "インストール・SHA256 検証済み。オフラインで使用できます。",
+  "Mask painting supports Brush, Eraser, Blur, and Gradient": "マスクにはブラシ、消しゴム、ぼかし、グラデーションを使用できます",
+  "Paint surface exceeds size or memory limits": "描画範囲がサイズまたはメモリの上限を超えています",
+  "Paint surface transform is not invertible": "描画対象の変換を反転できません",
+  "Not enough memory to expand paint surface": "描画範囲を拡張するためのメモリが不足しています",
+  "Not enough memory for paint mask": "描画マスクを準備するためのメモリが不足しています",
+  "Not enough memory for expanded stroke": "ストロークを拡張するためのメモリが不足しています"
 }

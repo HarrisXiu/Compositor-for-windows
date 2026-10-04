@@ -3,6 +3,7 @@
 #include "editable_layers.h"
 #include "effects.h"
 #include "filters.h"
+#include "paint_surface.h"
 #include "render.h"
 #include <QAbstractTextDocumentLayout>
 #include <QBuffer>
@@ -34,13 +35,20 @@ void Canvas::beginPaint(QMouseEvent *event) {
 
     require(!(paintMask() ? layer->mask : layer->image).isNull(), "Select a pixel layer or mask");
     require(!paintMask() || session_->tool == Tool::Brush || session_->tool == Tool::Erase ||
-                session_->tool == Tool::Blur,
-            "Mask painting supports Brush, Eraser, and Blur");
+                session_->tool == Tool::Blur || session_->tool == Tool::Gradient,
+            "Mask painting supports Brush, Eraser, Blur, and Gradient");
     if (session_->tool == Tool::Clone)
         require(cloneReady_, "Alt-click the canvas to set a clone source");
     require(!paintMask() || !layer->mask.isNull(), "Add a mask before painting it");
     emit editStarted();
     layer = document_->active();
+    paintBefore_ = *layer;
+    paintChanged_ = false;
+    strokeSelectionBounds_ = session_->selection.isNull() ? QRect() : selectionBounds();
+    cloneOffsetBefore_ = cloneOffset_;
+    cloneReadyBefore_ = cloneStrokeReady_;
+    if (paintMask())
+        preparePaintMask(*layer);
     beginLayerEdit(layer->id());
     strokeArea_ = {};
     strokePixels_ = {};
@@ -88,21 +96,64 @@ void Canvas::beginPaint(QMouseEvent *event) {
     if (session_->tool == Tool::Clone) {
         cloneStrokeReady_ = true;
         cloneSample_ = session_->cloneMerged ? fullComposite() : original_;
+        cloneSamplePlacement_ = session_->cloneMerged ? QTransform()
+                                                     : layer->placement(original_.size());
     }
     if (session_->tool != Tool::Gradient) {
         if ((session_->tool == Tool::Brush || session_->tool == Tool::Erase) &&
             (event->modifiers() & Qt::ShiftModifier) && lastBrushLayer_ == layer->id() &&
             lastBrushMask_ == paintMask()) {
-            auto delta = start_ - lastBrushPoint_;
-            const int steps = std::min(
-                1000, std::max(1, int(std::ceil(std::hypot(delta.x(), delta.y()) /
-                                                std::max(1.0, session_->brushSize * .1)))));
-            for (int i = 0; i <= steps; ++i)
-                dab(lastBrushPoint_ + delta * (double(i) / steps));
-        } else
+            paintSegment(lastBrushPoint_, start_);
+        } else {
+            preparePaintArea(start_, start_);
             dab(start_);
+        }
     }
     refreshStroke();
+}
+void Canvas::preparePaintArea(QPointF from, QPointF to) {
+    if (session_->tool != Tool::Brush && session_->tool != Tool::Erase &&
+        session_->tool != Tool::Clone && session_->tool != Tool::Heal)
+        return;
+    const auto radius = session_->brushSize / 2;
+    auto area = QRectF(from, to).normalized().adjusted(-radius, -radius, radius, radius)
+                    .intersected(QRectF(QPointF(), document_->size()));
+    if (!session_->selection.isNull())
+        area = area.intersected(strokeSelectionBounds_);
+    if (area.isEmpty())
+        return;
+    auto layer = document_->active();
+    const auto target = paintTarget(*layer, paintMask());
+    const auto bounds = paintSurfaceBounds(target, area);
+    if (bounds == target.image.rect())
+        return;
+    const auto oldExtent = layerExtent(*layer);
+    const auto offset = growPaintSurface(*layer, paintMask(), bounds);
+    const auto size = (paintMask() ? layer->mask : layer->image).size();
+    auto pad = [&](const QImage &source) {
+        QImage result(size, source.format());
+        require(!result.isNull(), "Not enough memory for expanded stroke");
+        result.fill(0);
+        QPainter p(&result);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.drawImage(offset, source);
+        return result;
+    };
+    original_ = pad(original_);
+    coverage_ = pad(coverage_);
+    // Pixel indices and the placement changed, so the old incremental render caches cannot carry.
+    strokePixels_ = {};
+    carriedKey_ = (paintMask() ? layer->mask : layer->image).cacheKey();
+    strokeArea_ |= oldExtent | layerExtent(*layer);
+}
+void Canvas::paintSegment(QPointF from, QPointF to) {
+    preparePaintArea(from, to);
+    const auto delta = to - from;
+    const int steps = int(std::clamp(std::ceil(std::hypot(delta.x(), delta.y()) /
+                                              std::max(.25, session_->brushSize * .1)),
+                                   1.0, 200000.0));
+    for (int i = 1; i <= steps; ++i)
+        dab(from + delta * (double(i) / steps));
 }
 void Canvas::continuePaint(QMouseEvent *e) {
     auto point = toDocument(e->position());
@@ -129,12 +180,7 @@ void Canvas::continuePaint(QMouseEvent *e) {
     } else if (session_->tool == Tool::Brush || session_->tool == Tool::Erase ||
                session_->tool == Tool::Clone || session_->tool == Tool::Heal ||
                session_->tool == Tool::Blur) {
-        auto delta = point - last_;
-        int steps = std::max(1, int(std::ceil(std::hypot(delta.x(), delta.y()) /
-                                              std::max(1.0, session_->brushSize * 0.1))));
-        steps = std::min(steps, 1000);
-        for (int i = 1; i <= steps; ++i)
-            dab(last_ + delta * (double(i) / steps));
+        paintSegment(last_, point);
         refreshStroke();
     } else
         update();
@@ -164,31 +210,49 @@ void Canvas::finishPaint(QMouseEvent *) {
         return;
     }
     if (session_->tool == Tool::Gradient) {
-        auto from = layer->placement(layer->image.size()).inverted().map(start_),
-             to = layer->placement(layer->image.size()).inverted().map(last_);
+        if (QLineF(start_, last_).length() < .001) {
+            emit editCanceled();
+            return;
+        }
+        auto target = paintTarget(*layer, paintMask());
+        auto area = session_->selection.isNull() ? QRect(QPoint(), document_->size())
+                                                : selectionBounds();
+        if (!area.isEmpty()) {
+            growPaintSurface(*layer, paintMask(), paintSurfaceBounds(target, area));
+        }
+        target = paintTarget(*layer, paintMask());
+        original_ = target.image;
+        auto placement = target.placement(original_.size());
         QImage painted = original_;
         painted.detach();
         QPainter p(&painted);
+        p.setTransform(placement.inverted());
         QColor begin = session_->foreground,
                end = session_->gradientBackground ? session_->background : QColor(Qt::transparent);
         if (session_->gradientReverse)
             std::swap(begin, end);
         p.setOpacity(session_->brushOpacity);
         if (session_->gradientKind == 1) {
-            QRadialGradient gradient(from, std::max(.001, QLineF(from, to).length()));
+            QRadialGradient gradient(start_, QLineF(start_, last_).length());
             gradient.setColorAt(0, begin);
             gradient.setColorAt(1, end);
-            p.fillRect(painted.rect(), gradient);
+            p.fillRect(placement.mapRect(painted.rect()), gradient);
         } else {
-            QLinearGradient gradient(from, to);
+            QLinearGradient gradient(start_, last_);
             gradient.setColorAt(0, begin);
             gradient.setColorAt(1, end);
-            p.fillRect(painted.rect(), gradient);
+            p.fillRect(placement.mapRect(painted.rect()), gradient);
         }
         p.end();
-        layer->image = limitToSelection(original_, painted, selectionForLayer(*layer));
-        layer->metadata.remove("text");
-        layer->metadata.remove("shape");
+        auto filled = limitToSelection(original_, painted, selectionForLayer(target));
+        paintChanged_ = filled != original_;
+        if (paintMask())
+            layer->mask = filled.convertToFormat(QImage::Format_Grayscale8);
+        else {
+            layer->image = filled;
+            layer->metadata.remove("text");
+            layer->metadata.remove("shape");
+        }
     }
     if (session_->tool == Tool::Heal) {
         require(!paintMask(), "Spot Healing currently targets image pixels");
@@ -202,6 +266,7 @@ void Canvas::finishPaint(QMouseEvent *) {
                           size_t(image.height()), size_t(image.bytesPerLine()),
                           float(session_->brushOpacity), session_->healingMode, 1) == 0,
                 "Spot healing ran out of memory");
+        paintChanged_ = image != original_;
         layer->image = image;
         layer->metadata.remove("text");
         layer->metadata.remove("shape");
@@ -211,12 +276,20 @@ void Canvas::finishPaint(QMouseEvent *) {
         lastBrushLayer_ = layer->id();
         lastBrushMask_ = paintMask();
     }
-    emit editFinished(session_->tool == Tool::Move       ? "Move Layer"
-                      : session_->tool == Tool::Gradient ? "Gradient"
-                      : session_->tool == Tool::Heal     ? "Spot Healing"
-                      : session_->tool == Tool::Blur     ? "Blur Stroke"
-                      : paintMask()                      ? "Paint Mask"
-                                                         : "Brush Stroke");
+    if (!paintChanged_ ||
+        (layer->image == paintBefore_.image && layer->mask == paintBefore_.mask &&
+         layer->metadata == paintBefore_.metadata)) {
+        cloneOffset_ = cloneOffsetBefore_;
+        cloneStrokeReady_ = cloneReadyBefore_;
+        emit editCanceled();
+    } else
+        emit editFinished(session_->tool == Tool::Gradient ? "Gradient"
+                          : session_->tool == Tool::Clone  ? "Clone Stamp"
+                          : session_->tool == Tool::Heal   ? "Spot Healing"
+                          : session_->tool == Tool::Blur   ? "Blur Stroke"
+                          : paintMask()                    ? "Paint Mask"
+                          : session_->tool == Tool::Erase  ? "Erase"
+                                                           : "Brush Stroke");
     refresh();
 
     original_ = {};
