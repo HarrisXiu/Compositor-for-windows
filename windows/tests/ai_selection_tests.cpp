@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSettings>
@@ -28,7 +29,7 @@ namespace {
 class Fixture final : public AiSelectionService {
   public:
     std::atomic<int> calls{0}, delay{30};
-    bool fail = false;
+    std::atomic<bool> fail{false};
     AiSelectionResult subject(const QImage &image, std::shared_ptr<AiCancellation> cancel) override {
         wait(cancel);
         QImage mask(image.size(), QImage::Format_Grayscale8);
@@ -218,12 +219,14 @@ class SelectionTests : public QObject {
         EditorWindow w;auto fixture=prepare(w);fixture->fail=true;auto p=page(w);auto original=p->session.selection;
         action(w,"Select Object…")->trigger();auto dialog=w.findChild<QDialog *>("aiObjectDialog");
         emit p->canvas->aiPointPicked({20,20},true);QVERIFY(!ok(dialog)->isEnabled());
-        emit p->canvas->aiPointPicked({20,20},false);QTRY_VERIFY(fixture->calls>0);QTest::qWait(100);
+        emit p->canvas->aiPointPicked({20,20},false);QTRY_VERIFY(fixture->calls>0);
+        QTRY_COMPARE(dialog->findChild<QLabel *>("aiObjectStatus")->text(),QString("Fixture model failure"));
         QCOMPARE(p->session.selection,original);QVERIFY(!ok(dialog)->isEnabled());
         fixture->fail=false;emit p->canvas->aiPointPicked({40,40},false);QTRY_VERIFY(ok(dialog)->isEnabled());
         fixture->fail=true;const int previous=fixture->calls;
         dialog->findChild<QComboBox *>("aiObjectModel")->setCurrentIndex(1);
-        QTRY_VERIFY(fixture->calls>previous);QTest::qWait(100);
+        QTRY_VERIFY(fixture->calls>previous);
+        QTRY_COMPARE(dialog->findChild<QLabel *>("aiObjectStatus")->text(),QString("Fixture model failure"));
         QCOMPARE(p->session.selection,original);QVERIFY(!ok(dialog)->isEnabled());dialog->reject();
     }
     void objectDialogLanguages_data() {

@@ -104,6 +104,7 @@ class EditorWindow : public QMainWindow {
     void maskFromSelection();
     void resizeSelectionDialog(bool expand);
     void colorRangeDialog();
+    void removeBackground();
     void selectSubject();
     void selectObject();
     void fillSelection(bool erase = false, bool background = false);

@@ -672,5 +672,17 @@
   "The maximum is 1024 points. Remove or clear points to continue.": "最多支持 1024 个提示点。请删除或清除提示点后继续。",
   "AI Subject Selection": "AI 主体选区",
   "AI Object Selection": "AI 对象选区",
-  "Model": "模型"
+  "Model": "模型",
+  "Remove Background": "移除背景",
+  "Hide the background with a layer mask. Original pixels are preserved.": "通过图层蒙版隐藏背景，保留原始像素。",
+  "Quality": "质量",
+  "Basic": "基础",
+  "Advanced": "精细",
+  "Refine": "细化",
+  "Shift Edge": "边缘偏移",
+  "Show Mask": "显示蒙版",
+  "Calculating background mask…": "正在计算背景蒙版…",
+  "Background preview ready.": "背景预览已就绪。",
+  "Applying full-resolution background mask…": "正在应用完整分辨率的背景蒙版…",
+  "No foreground subject was detected in this layer. Try an image with a more distinct subject.": "此图层中未检测到前景主体，请尝试主体更清晰的图像。"
 }

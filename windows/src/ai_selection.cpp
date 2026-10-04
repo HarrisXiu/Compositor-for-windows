@@ -22,6 +22,12 @@ class SelectionService final : public AiSelectionService {
   public:
     SelectionService(QString root, AiOptions options) : root_(std::move(root)), options_(options) {}
     AiSelectionResult subject(const QImage &image, std::shared_ptr<AiCancellation> cancellation) override {
+        return segment(image, cancellation, true);
+    }
+    AiSelectionResult matte(const QImage &image, std::shared_ptr<AiCancellation> cancellation) override {
+        return segment(image, cancellation, false);
+    }
+    AiSelectionResult segment(const QImage &image, std::shared_ptr<AiCancellation> cancellation, bool binary) {
         std::lock_guard lock(mutex_);
         check(cancellation);
         QElapsedTimer timer;
@@ -36,7 +42,8 @@ class SelectionService final : public AiSelectionService {
         require(run.outputs.size() == 1 && run.outputs.first().name == "logits",
                 "BiRefNet returned an unexpected output contract");
         AiSelectionResult result;
-        result.mask = aiSubjectSelection(run.outputs.first(), image, cancellation);
+        result.mask = binary ? aiSubjectSelection(run.outputs.first(), image, cancellation)
+                             : aiSubjectMatte(run.outputs.first(), image, cancellation);
         result.backend = run.backend;
         result.adapter = run.adapter;
         result.fallbackReason = run.fallbackReason;
@@ -91,8 +98,8 @@ class SelectionService final : public AiSelectionService {
 std::shared_ptr<AiSelectionService> createAiSelectionService(QString root, AiOptions options) {
     return std::make_shared<SelectionService>(std::move(root), options);
 }
-QImage aiSubjectSelection(const AiTensor &logits, const QImage &image,
-                          std::shared_ptr<AiCancellation> cancellation) {
+static QImage subjectMask(const AiTensor &logits, const QImage &image,
+                          std::shared_ptr<AiCancellation> cancellation, bool binary) {
     require(!image.isNull() && logits.type == AiTensorType::Float32 && logits.shape.size() == 4 &&
                 logits.shape[0] == 1 && logits.shape[1] == 1 && logits.shape[2] > 0 && logits.shape[3] > 0,
             "Invalid subject mask contract");
@@ -117,11 +124,22 @@ QImage aiSubjectSelection(const AiTensor &logits, const QImage &image,
             const int x0 = int(sx), x1 = std::min(x0 + 1, w - 1);
             const auto a = probabilities[y0 * w + x0] * (1 - (sx - x0)) + probabilities[y0 * w + x1] * (sx - x0);
             const auto b = probabilities[y1 * w + x0] * (1 - (sx - x0)) + probabilities[y1 * w + x1] * (sx - x0);
-            row[x] = image.pixelColor(x, y).alpha() && a * (1 - (sy - y0)) + b * (sy - y0) > .5 ? 255 : 0;
+            const auto value = a * (1 - (sy - y0)) + b * (sy - y0);
+            row[x] = !image.pixelColor(x, y).alpha() ? 0
+                     : binary ? (value > .5 ? 255 : 0)
+                              : uchar(std::clamp(std::lround(value * 255), 0L, 255L));
         }
     }
     check(cancellation);
     return mask;
+}
+QImage aiSubjectSelection(const AiTensor &logits, const QImage &image,
+                          std::shared_ptr<AiCancellation> cancellation) {
+    return subjectMask(logits, image, cancellation, true);
+}
+QImage aiSubjectMatte(const AiTensor &logits, const QImage &image,
+                      std::shared_ptr<AiCancellation> cancellation) {
+    return subjectMask(logits, image, cancellation, false);
 }
 AiSelectionResult aiObjectSelection(const AiRunResult &run, const QImage &image, AiImageKind kind,
                                     std::shared_ptr<AiCancellation> cancellation) {

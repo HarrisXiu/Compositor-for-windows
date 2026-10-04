@@ -59,4 +59,6 @@ $env:COMPOSITOR_AI_SELECTION_PROVIDER = 'cpu' # 或 dml，强制受支持的 Int
 
 ## 后续范围
 
+后续 AI3 已在独立 `codex/ai3` 分支完成，见 [AI3 说明](AI3_README.md)。下面保留 AI2 提交时的范围记录。
+
 AI3 背景移除和引导滤波细化尚未开发。GPU 仍只支持受支持的 Intel 核显 DirectML，其他显卡使用 CPU；不新增 NVIDIA / AMD DirectML 适配，NVIDIA CUDA 留待后续。本轮不推送、不合入主分支、不创建 Release 或上传模型资产。

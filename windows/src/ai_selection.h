@@ -14,6 +14,9 @@ class AiSelectionService {
   public:
     virtual ~AiSelectionService() = default;
     virtual AiSelectionResult subject(const QImage &, std::shared_ptr<AiCancellation>) = 0;
+    virtual AiSelectionResult matte(const QImage &image, std::shared_ptr<AiCancellation> cancellation) {
+        return subject(image, cancellation);
+    }
     virtual AiSelectionResult object(const QImage &, const QString &model,
                                      const QVector<QPointF> &, const QVector<int> &,
                                      std::shared_ptr<AiCancellation>) = 0;
@@ -21,6 +24,8 @@ class AiSelectionService {
 std::shared_ptr<AiSelectionService> createAiSelectionService(QString modelRoot = {}, AiOptions options = {});
 QImage aiSubjectSelection(const AiTensor &logits, const QImage &image,
                           std::shared_ptr<AiCancellation> cancellation = {});
+QImage aiSubjectMatte(const AiTensor &logits, const QImage &image,
+                       std::shared_ptr<AiCancellation> cancellation = {});
 AiSelectionResult aiObjectSelection(const AiRunResult &, const QImage &, AiImageKind,
                                     std::shared_ptr<AiCancellation> cancellation = {});
 QImage combineAiSelection(const QImage &original, const QImage &mask, int mode);

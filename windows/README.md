@@ -30,13 +30,17 @@ When publishing a release, attach everything in `artifacts/qt-source/` beside th
 
 AI1 from `ai1-runtime` at `42f4103` is now integrated with C1–C5 in this worktree. Use **Help > AI Models…** to import matching local files; the manager verifies size/SHA256, installs licenses and retains models for offline use. The catalog offers BiRefNet Lite, SAM 2 Hiera Tiny and MobileSAM. Production model endpoints remain unpublished, so download/resume controls remain disabled. The runtime is C++; the application does not require Python.
 
-DirectML is limited to supported Intel integrated GPUs; other adapters use CPU, and NVIDIA CUDA is deferred. Background tasks, cancellation, finite-output/device-loss checks and SAM feature reuse are implemented. AI2 subject/object selection is integrated; matte refinement and background removal remain pending. See [AI2 usage and verification](AI2_README.md). See [AI1 README](AI1_README.md) for usage and the [integration report](AI1_INTEGRATION_REPORT.md) for the combined build. Earlier eight-suite and complete-package evidence belongs to the separate AI1 worktree and does not describe a newly generated combined package.
+DirectML is limited to supported Intel integrated GPUs; other adapters use CPU, and NVIDIA CUDA is deferred. Background tasks, cancellation, finite-output/device-loss checks and SAM feature reuse are implemented. AI2 subject/object selection and AI3 soft-mask background removal/guided refinement are integrated; see [AI3 usage and verification](AI3_README.md). See [AI2 usage and verification](AI2_README.md). See [AI1 README](AI1_README.md) for usage and the [integration report](AI1_INTEGRATION_REPORT.md) for the combined build. Earlier eight-suite and complete-package evidence belongs to the separate AI1 worktree and does not describe a newly generated combined package.
 
 ## AI subject and object selection (AI2)
 
 After importing the required models in **Help > AI Models…**, use **Select > Select Subject** for BiRefNet Lite selection. Calculation runs in the background and can be canceled. Use **Select > Select Object…**, choose SAM 2 or MobileSAM, and click the object on the main canvas. Add foreground points, or Alt-click to exclude background. Green/red markers show the prompt types. The same image's encoding is reused across prompt changes.
 
 Object preview supports Replace/Add/Subtract/Intersect, Remove Last Point, Clear Points, Enter to apply, Backspace to remove a point and Esc to cancel. Wheel zoom and Space-drag remain available. OK records one selection undo step; Cancel restores the original. Image edits, project/tool changes and external selection changes invalidate old work. These operations preserve image pixels and saved-content state. Models use the existing offline cache, pinned integrity checks and Intel-integrated-only DirectML / CPU policy. See [AI2 detailed usage, tests and remaining scope](AI2_README.md).
+
+## AI3 background removal
+
+Choose a pixel layer and **Filter > Remove Background…**. Basic preserves BiRefNet Lite soft coverage; Advanced adds guided refinement, contrast and edge shift. The dialog reuses one model result, shows a cancellable preview and computes a full-resolution layer mask on OK, with one undo step. Existing selection and mask coverage are preserved; old mask placement is baked into the layer grid and the result links to the layer. Original pixels remain unchanged. See [usage, limits and real-model verification](AI3_README.md).
 
 ## Offline AI model export
 
@@ -89,7 +93,7 @@ The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 
 
 ## Differences and work remaining
 
-**This preview does not yet satisfy full feature parity with the Mac app.** It uses a tiled CPU renderer; Direct3D acceleration, Camera Raw targeted slider gestures and RGB hover readouts, full canvas filter previews and color-band editors, mesh distort, advanced text/shape interactions, selection transforms, multi-layer/folder transforms, complete vector conversion, HEIC, AI edge refinement and background removal, installer/shell integration remain to be migrated. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
+**This preview does not yet satisfy full feature parity with the Mac app.** It uses a tiled CPU renderer; Direct3D acceleration, Camera Raw targeted slider gestures and RGB hover readouts, full canvas filter previews and color-band editors, mesh distort, advanced text/shape interactions, selection transforms, multi-layer/folder transforms, complete vector conversion, HEIC, installer/shell integration remain to be migrated. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
 
 Unknown future layer effects are retained but omitted from the preview; a visible warning lists them and flattening/export/copy merged is blocked while present. Supported effects and adjustments now render. Hue/Saturation uses the original 33³ color-cube algorithm and C interpolation; Curves uses the original PCHIP algorithm and C lookup. Gaussian/Motion Blur, standalone Bloom and font rasterization use Windows implementations; Mac reference comparisons are still required to establish visual parity. Preview noise/grain coordinates and spatial filter extents still need matching against the original. PSD compression/depth support matches the upstream reader, but real Photoshop interoperability needs broader fixtures beyond the independent test files.
 

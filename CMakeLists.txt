@@ -57,7 +57,7 @@ target_include_directories(compositor_core PUBLIC windows/src)
 target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)
 
 add_library(compositor_ai STATIC windows/src/ai_session.cpp windows/src/ai_preprocess.cpp windows/src/ai_sam.cpp
-    windows/src/ai_models.cpp windows/src/ai_download.cpp windows/src/ai_selection.cpp)
+    windows/src/ai_models.cpp windows/src/ai_download.cpp windows/src/ai_selection.cpp windows/src/ai_background.cpp)
 qt_add_resources(compositor_ai ai_licenses PREFIX "/ai-licenses" BASE "windows/licenses"
     FILES windows/licenses/BiRefNet-MIT.txt windows/licenses/Apache-2.0.txt windows/licenses/Microsoft-MIT.txt)
 target_include_directories(compositor_ai PUBLIC windows/src)
@@ -69,7 +69,7 @@ add_library(compositor_ui STATIC
     windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp
     windows/src/editor_menus.cpp windows/src/ai_models_dialog.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
     windows/src/editor_layers.cpp windows/src/layer_transfer.cpp windows/src/image_dialogs.cpp windows/src/crop_tool.cpp
-    windows/src/ai_selection_dialog.cpp windows/src/selection_dialogs.cpp windows/src/document_dialogs.cpp windows/src/filter_dialogs.cpp windows/src/effect_dialogs.cpp
+    windows/src/ai_background_dialog.cpp windows/src/ai_selection_dialog.cpp windows/src/selection_dialogs.cpp windows/src/document_dialogs.cpp windows/src/filter_dialogs.cpp windows/src/effect_dialogs.cpp
     windows/src/editable_dialogs.cpp windows/src/canvas_tools.cpp windows/src/canvas_paint.cpp
     windows/src/canvas.cpp windows/src/canvas.h windows/src/curve_editor.cpp windows/src/raw_dialog.cpp windows/src/image_scope.cpp windows/src/language.cpp windows/src/language.h)
 qt_add_resources(compositor_ui translations PREFIX "/translations" BASE "windows/translations"
@@ -92,12 +92,19 @@ add_custom_command(TARGET Compositor POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy
 
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(compositor_ai_background_tests windows/tests/ai_background_tests.cpp)
+    target_link_libraries(compositor_ai_background_tests PRIVATE compositor_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(compositor_ai_background_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME compositor_ai_background COMMAND compositor_ai_background_tests -o -,txt)
+    set_tests_properties(compositor_ai_background PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     qt_add_executable(compositor_ai_selection_tests windows/tests/ai_selection_tests.cpp)
     target_link_libraries(compositor_ai_selection_tests PRIVATE compositor_ui Qt6::Test)
     if(MSVC)
         target_compile_options(compositor_ai_selection_tests PRIVATE /utf-8)
     endif()
-    add_test(NAME compositor_ai_selection COMMAND compositor_ai_selection_tests)
+    add_test(NAME compositor_ai_selection COMMAND compositor_ai_selection_tests -o -,txt)
     set_tests_properties(compositor_ai_selection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     qt_add_executable(compositor_ai_tests windows/tests/ai_tests.cpp)
     target_link_libraries(compositor_ai_tests PRIVATE compositor_ai Qt6::Test Qt6::Widgets)
@@ -161,7 +168,7 @@ if(BUILD_TESTING)
     add_test(NAME compositor_canvas COMMAND compositor_canvas_tests)
     set_tests_properties(compositor_canvas PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        foreach(target compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests)
+        foreach(target compositor_ai_background_tests compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests)
             foreach(library Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Network Qt6::Test LibRaw)
                 add_custom_command(TARGET ${target} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:${target}>")
@@ -174,7 +181,7 @@ if(BUILD_TESTING)
 endif()
 set(COMPOSITOR_AI_RUNTIME_TARGETS Compositor compositor_ai_probe)
 if(BUILD_TESTING)
-    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests)
+    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests)
 endif()
 foreach(target ${COMPOSITOR_AI_RUNTIME_TARGETS})
     foreach(library OnnxRuntime DirectML Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Svg Qt6::Network LibRaw)
