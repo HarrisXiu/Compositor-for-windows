@@ -51,7 +51,7 @@ if(MSVC)
 endif()
 
 add_library(compositor_core STATIC
-    windows/src/selection_operations.cpp windows/src/layer_operations.cpp windows/src/image_operations.cpp windows/src/distort.cpp
+    windows/src/selection_operations.cpp windows/src/layer_operations.cpp windows/src/image_operations.cpp windows/src/distort.cpp windows/src/paint_surface.cpp
     windows/src/document.cpp windows/src/render.cpp windows/src/blend.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
 target_include_directories(compositor_core PUBLIC windows/src)
 target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)

@@ -661,5 +661,11 @@
   "Pick a color to preview the selection.": "选取颜色以预览选区。",
   "Updating selection…": "正在更新选区…",
   "Selection preview ready.": "选区预览已更新。",
-  "Selection": "选区"
+  "Selection": "选区",
+  "Mask painting supports Brush, Eraser, Blur, and Gradient": "蒙版绘画支持画笔、橡皮擦、模糊和渐变",
+  "Paint surface exceeds size or memory limits": "绘画范围超过尺寸或内存限制",
+  "Paint surface transform is not invertible": "绘画对象的变换无法求逆",
+  "Not enough memory to expand paint surface": "内存不足，无法扩展绘画范围",
+  "Not enough memory for paint mask": "内存不足，无法准备绘画蒙版",
+  "Not enough memory for expanded stroke": "内存不足，无法扩展笔迹"
 }

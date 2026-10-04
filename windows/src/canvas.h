@@ -169,6 +169,12 @@ class Canvas : public QWidget {
     QRectF moveFrame_;
     bool distorting_ = false, duplicating_ = false;
     QImage cloneSample_;
+    QTransform cloneSamplePlacement_;
+    Layer paintBefore_;
+    bool paintChanged_ = false;
+    QRect strokeSelectionBounds_;
+    QPointF cloneOffsetBefore_;
+    bool cloneReadyBefore_ = false;
     bool cloneStrokeReady_ = false;
     QPointF lastBrushPoint_;
     QString lastBrushLayer_;
@@ -212,6 +218,8 @@ class Canvas : public QWidget {
     void endLayerEdit();
     CanvasTool &controller();
     void beginPaint(QMouseEvent *event);
+    void preparePaintArea(QPointF from, QPointF to);
+    void paintSegment(QPointF from, QPointF to);
     void continuePaint(QMouseEvent *event);
     void finishPaint(QMouseEvent *event);
     void drawGesture(QPainter &painter);

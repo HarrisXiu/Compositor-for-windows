@@ -254,7 +254,8 @@ void EditorWindow::syncExtraToolOptions() {
         if (action->property("opacityOnly").toBool())
             show = brush || s.tool == Tool::Gradient;
         if (action->property("maskOnly").toBool())
-            show = s.tool == Tool::Brush || s.tool == Tool::Erase || s.tool == Tool::Blur;
+            show = s.tool == Tool::Brush || s.tool == Tool::Erase || s.tool == Tool::Blur ||
+                   s.tool == Tool::Gradient;
         action->setVisible(show);
     }
     findChild<QToolBar *>("wandOptions")->setVisible(s.tool == Tool::Wand);

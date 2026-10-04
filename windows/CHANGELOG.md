@@ -10,6 +10,13 @@
 - Added Color Range with replace/add/exclude samples, fuzziness, inversion, background mask/live canvas preview, transactional OK/Cancel and Chinese/Japanese translations.
 - Extended canvas interaction and persistence regression on the AI1 integration baseline; nine CTest suites pass. See [verification](S1-S3_REPORT.md). S2 and AI editing remain separate tasks.
 
+### 2026-10-04 — P1–P3, version remains 0.4.0
+
+- Completed growing paint/mask surfaces with preserved affine placement, implicit mask coverage, stroke opacity, selection clipping, undo and cancellation. Materialized small masks into editable grids.
+- Completed release-endpoint interpolation for dab tools and closer spacing for fine/long brush segments; verified existing smoothing and Shift lines.
+- Fixed clone sampling during growth, negative source coordinates, transparent source-over blending and canceled alignment. Gradients now use document coordinates and, like foreground/background fills, grow to the canvas or selection; gradients also target masks.
+- Added 13 canvas regressions (33 canvas tests pass); all ten Release CTest suites pass. See [P1–P3 delivery notes](P1-P3_REPORT.md). No portable ZIP or release was generated.
+
 ### 2026-10-04 — AI1 integration, version remains 0.4.0
 
 - Merged AI1's C++ inference/model management with the existing C1–C5 editor, preserving canvas interactions, customizable shortcuts and Chinese/Japanese catalogs.

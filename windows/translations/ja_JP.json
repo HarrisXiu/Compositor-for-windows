@@ -661,5 +661,11 @@
   "Pick a color to preview the selection.": "色を採取して選択範囲をプレビュー。",
   "Updating selection…": "選択範囲を更新中…",
   "Selection preview ready.": "選択範囲のプレビューを更新しました。",
-  "Selection": "選択範囲"
+  "Selection": "選択範囲",
+  "Mask painting supports Brush, Eraser, Blur, and Gradient": "マスクにはブラシ、消しゴム、ぼかし、グラデーションを使用できます",
+  "Paint surface exceeds size or memory limits": "描画範囲がサイズまたはメモリの上限を超えています",
+  "Paint surface transform is not invertible": "描画対象の変換を反転できません",
+  "Not enough memory to expand paint surface": "描画範囲を拡張するためのメモリが不足しています",
+  "Not enough memory for paint mask": "描画マスクを準備するためのメモリが不足しています",
+  "Not enough memory for expanded stroke": "ストロークを拡張するためのメモリが不足しています"
 }

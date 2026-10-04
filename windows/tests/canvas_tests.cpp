@@ -3,6 +3,7 @@
 #include "demo.h"
 #include "editor.h"
 #include "language.h"
+#include "paint_surface.h"
 #include "render.h"
 #include "shortcuts.h"
 #include "selection_operations.h"
@@ -30,6 +31,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolBar>
+#include <algorithm>
 using namespace compositor;
 namespace {
 Document smallDocument() {
@@ -37,6 +39,14 @@ Document smallDocument() {
     QImage image(64, 64, QImage::Format_RGBA8888_Premultiplied);
     image.fill(Qt::red);
     d.addImage("Layer", image);
+    return d;
+}
+Document patchDocument() {
+    auto d = Document::create({64, 64});
+    QImage image(8, 8, QImage::Format_RGBA8888_Premultiplied);
+    image.fill(Qt::red);
+    auto id = d.addImage("Patch", image);
+    d.find(id)->setBounds({28, 28, 8, 8});
     return d;
 }
 void ready(EditorPage &p) {
@@ -821,6 +831,393 @@ class CanvasTests : public QObject {
             heal.history.undo();
             QCOMPARE(heal.document.active()->image, image);
         }
+    }
+    void paintPaddingPreservesTransformedPixelsAndMasks() {
+        for (double angle : {0.0, 37.0, 90.0})
+            for (bool flip : {false, true}) {
+                auto d = patchDocument();
+                auto l = d.active();
+                auto t = l->transform();
+                t["rotation"] = angle;
+                t["flipX"] = flip;
+                t["size"] = QJsonArray{16, 12};
+                l->metadata["transform"] = t;
+                l->mask = QImage(8, 8, QImage::Format_Grayscale8);
+                l->mask.fill(255);
+                l->mask.scanLine(2)[3] = 30;
+                l->metadata["maskFile"] = l->id() + ".mask.png";
+                const auto image = l->image, mask = l->mask;
+                const auto old = l->placement(image.size());
+                const auto offset = growPaintSurface(*l, false, {-4, -3, 20, 18});
+                QCOMPARE(offset, QPoint(4, 3));
+                auto next = l->placement(l->image.size());
+                for (QPointF point : {QPointF(), QPointF(3.5, 2.5), QPointF(8, 8)})
+                    QVERIFY(QLineF(old.map(point), next.map(point + offset)).length() < .00001);
+                QCOMPARE(l->image.copy(QRect(offset, image.size())), image);
+                QCOMPARE(l->mask.copy(QRect(offset, mask.size())), mask);
+                QCOMPARE(l->mask.constScanLine(0)[0], uchar(255));
+                d.validateAssets();
+                const auto layerTransform = l->transform();
+                l->metadata["maskPlacement"] = t;
+                auto placed = paintTarget(*l, true).placement(l->mask.size());
+                const auto moved = growPaintSurface(*l, true, {-2, -2, 24, 22});
+                QCOMPARE(l->transform(), layerTransform);
+                QVERIFY(QLineF(placed.map(QPointF(4, 4)),
+                               paintTarget(*l, true).placement(l->mask.size()).map(
+                                   QPointF(4, 4) + moved)).length() < .00001);
+            }
+    }
+    void brushGrowsEveryEdgeAndRestoresUndoCancelAndSave() {
+        auto d = patchDocument();
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Brush);
+        p.session.brushSize = 6;
+        p.session.hardness = 1;
+        p.session.foreground = Qt::green;
+        for (QPoint point : {QPoint(20, 32), QPoint(44, 32), QPoint(32, 20), QPoint(32, 44)}) {
+            QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, point.x(), point.y()));
+            QCOMPARE(renderDocument(p.document).pixelColor(point), QColor(Qt::green));
+            QCOMPARE(renderDocument(p.document).pixelColor(30, 30), QColor(Qt::red));
+        }
+        QCOMPARE(p.history.count(), 4);
+        const auto grown = p.document;
+        if (qEnvironmentVariableIsSet("COMPOSITOR_PAINT_SCREENSHOTS")) {
+            p.canvas->zoomTo(4);
+            QTest::qWait(30);
+            p.canvas->waitForRendering();
+            QTest::qWait(30);
+            p.canvas->grab().save("artifacts/p1-p3-growing-brush.png");
+            p.canvas->zoomTo(1);
+        }
+        QTemporaryDir dir;
+        saveProject(p.document, dir.path() + "/Paint.comp");
+        auto loaded = loadProject(dir.path() + "/Paint.comp");
+        QCOMPARE(renderDocument(loaded), renderDocument(grown));
+        for (int i = 0; i < 4; ++i)
+            p.history.undo();
+        QCOMPARE(p.document.active()->image, d.active()->image);
+        QCOMPARE(p.document.active()->metadata, d.active()->metadata);
+        for (int i = 0; i < 4; ++i)
+            p.history.redo();
+        QCOMPARE(p.document.active()->image, grown.active()->image);
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 8, 8));
+        mouse(p.canvas, QEvent::MouseMove, at(p, 56, 8));
+        QTest::keyClick(p.canvas, Qt::Key_Escape);
+        QCOMPARE(p.document.active()->image, grown.active()->image);
+        QCOMPARE(p.document.active()->metadata, grown.active()->metadata);
+        QCOMPARE(p.history.count(), 4);
+    }
+    void growingStrokeKeepsOpacitySelectionAndReleaseEndpoint() {
+        auto d = patchDocument();
+        d.active()->image.fill(Qt::transparent);
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Brush);
+        p.session.brushSize = 4;
+        p.session.hardness = 1;
+        p.session.brushOpacity = .5;
+        p.session.foreground = Qt::green;
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 10, 32));
+        mouse(p.canvas, QEvent::MouseMove, at(p, 30, 32));
+        mouse(p.canvas, QEvent::MouseMove, at(p, 50, 32));
+        mouse(p.canvas, QEvent::MouseMove, at(p, 10, 32));
+        mouse(p.canvas, QEvent::MouseButtonRelease, at(p, 54, 32));
+        const auto result = renderDocument(p.document);
+        for (int x = 10; x <= 54; ++x)
+            QVERIFY(std::abs(result.pixelColor(x, 32).alpha() - 128) <= 1);
+        QCOMPARE(p.history.count(), 1);
+        p.history.undo();
+        p.session.selection = QImage(64, 64, QImage::Format_Grayscale8);
+        p.session.selection.fill(0);
+        p.session.selection.scanLine(16)[16] = 128;
+        p.session.brushOpacity = 1;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 16, 16));
+        auto selected = renderDocument(p.document);
+        QCOMPARE(selected.pixelColor(16, 16).alpha(), 128);
+        QCOMPARE(selected.pixelColor(17, 16).alpha(), 0);
+    }
+    void independentAndFolderMasksGrowWithoutMovingLayer() {
+        for (bool group : {false, true}) {
+            auto d = patchDocument();
+            const auto id = group ? d.addGroup("Folder") : d.activeId();
+            auto l = d.find(id);
+            l->mask = QImage(8, 8, QImage::Format_Grayscale8);
+            l->mask.fill(0);
+            l->metadata["maskFile"] = id + ".mask.png";
+            l->metadata["maskPlacement"] = d.layers.front().transform();
+            l->metadata["maskLinked"] = false;
+            if (group)
+                d.layers.front().metadata["parentID"] = id;
+            d.metadata["activeLayerID"] = id;
+            EditorPage p(d);
+            ready(p);
+            p.canvas->setTool(Tool::Brush);
+            p.session.target = EditTarget::Mask;
+            p.session.brushSize = 6;
+            p.session.hardness = 1;
+            p.session.foreground = Qt::white;
+            QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 16, 16));
+            auto painted = paintTarget(*p.document.active(), true);
+            auto pixel = painted.placement(painted.image.size()).inverted().map(QPointF(16, 16));
+            QCOMPARE(painted.image.constScanLine(int(pixel.y()))[int(pixel.x())], uchar(255));
+            QCOMPARE(p.document.active()->transform(), d.active()->transform());
+            QCOMPARE(p.document.active()->image, d.active()->image);
+            QCOMPARE(p.history.count(), 1);
+            p.document.validateAssets();
+            p.history.undo();
+            QCOMPARE(p.document.active()->metadata, d.active()->metadata);
+            QCOMPARE(p.document.active()->mask, d.active()->mask);
+        }
+    }
+    void implicitMaskGrowthKeepsOldCoverageAndRevealsNewPaint() {
+        auto d = patchDocument();
+        d.active()->mask = QImage(8, 8, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        d.active()->mask.scanLine(2)[2] = 0;
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Brush);
+        p.session.brushSize = 4;
+        p.session.hardness = 1;
+        p.session.foreground = Qt::blue;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 16, 16));
+        auto result = renderDocument(p.document);
+        QCOMPARE(result.pixelColor(16, 16), QColor(Qt::blue));
+        QCOMPARE(result.pixelColor(30, 30).alpha(), 0);
+        QCOMPARE(result.pixelColor(32, 32), QColor(Qt::red));
+        p.history.undo();
+        QCOMPARE(p.document.active()->mask, d.active()->mask);
+        QCOMPARE(p.document.active()->metadata, d.active()->metadata);
+    }
+    void cloneGrowthUsesFrozenSourceCoordinatesAndCancelAlignment() {
+        auto d = patchDocument();
+        d.active()->image.setPixelColor(2, 2, Qt::green);
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Clone);
+        p.session.brushSize = 2;
+        p.session.hardness = 1;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, Qt::AltModifier, at(p, 30, 30));
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 10, 10));
+        QTest::keyClick(p.canvas, Qt::Key_Escape);
+        QCOMPARE(p.history.count(), 0);
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 50, 50));
+        QCOMPARE(renderDocument(p.document).pixelColor(50, 50), QColor(Qt::green));
+        p.history.undo();
+        QCOMPARE(p.document.active()->image, d.active()->image);
+        p.session.cloneAligned = false;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, Qt::AltModifier, at(p, 27, 27));
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 10, 10));
+        QCOMPARE(p.history.index(), 0);
+        QCOMPARE(p.document.active()->metadata, d.active()->metadata);
+    }
+    void paintOutsideSelectionOrCanvasDoesNotDirtyDocument() {
+        EditorPage p(patchDocument());
+        ready(p);
+        p.canvas->setTool(Tool::Brush);
+        p.session.brushSize = 4;
+        p.session.selection = QImage(64, 64, QImage::Format_Grayscale8);
+        p.session.selection.fill(0);
+        p.session.selection.scanLine(8)[8] = 255;
+        p.session.selection.scanLine(56)[56] = 255;
+        const auto before = p.document;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 16, 16));
+        QCOMPARE(p.history.count(), 0);
+        QVERIFY(!p.isModified());
+        QCOMPARE(p.document.active()->metadata, before.active()->metadata);
+        QCOMPARE(p.document.active()->image, before.active()->image);
+        p.session.selection = {};
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, -20, -20));
+        QCOMPARE(p.history.count(), 0);
+        QVERIFY(!p.isModified());
+    }
+    void radialGradientUsesDocumentCoordinatesAndGrows() {
+        auto d = patchDocument();
+        auto t = d.active()->transform();
+        t["size"] = QJsonArray{16, 8};
+        d.active()->metadata["transform"] = t;
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Gradient);
+        p.session.gradientKind = 1;
+        p.session.gradientBackground = true;
+        p.session.foreground = Qt::white;
+        p.session.background = Qt::black;
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 32, 32));
+        mouse(p.canvas, QEvent::MouseButtonRelease, at(p, 52, 32));
+        const auto result = renderDocument(p.document);
+        QVERIFY(std::abs(result.pixelColor(42, 32).red() - result.pixelColor(32, 42).red()) < 12);
+        QVERIFY(result.pixelColor(8, 8).alpha() > 240);
+        QCOMPARE(p.history.count(), 1);
+        p.history.undo();
+        QCOMPARE(p.document.active()->metadata, d.active()->metadata);
+        QCOMPARE(p.document.active()->image, d.active()->image);
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 32, 32));
+        QCOMPARE(p.history.index(), 0);
+        QVERIFY(!p.isModified());
+    }
+    void linearGradientReverseTransparencySelectionAndMask() {
+        auto d = patchDocument();
+        d.active()->image.fill(Qt::transparent);
+        d.active()->mask = QImage(8, 8, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Gradient);
+        p.session.foreground = Qt::white;
+        p.session.gradientReverse = true;
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 16, 32));
+        mouse(p.canvas, QEvent::MouseButtonRelease, at(p, 48, 32));
+        const auto result = renderDocument(p.document);
+        QVERIFY(result.pixelColor(48, 32).alpha() > 240);
+        QVERIFY(result.pixelColor(16, 32).alpha() < 20);
+        p.history.undo();
+        p.session.target = EditTarget::Mask;
+        p.session.gradientBackground = true;
+        p.session.background = Qt::black;
+        p.session.gradientReverse = false;
+        p.session.selection = QImage(64, 64, QImage::Format_Grayscale8);
+        p.session.selection.fill(0);
+        for (int y = 8; y < 24; ++y)
+            std::fill_n(p.session.selection.scanLine(y) + 8, 16, uchar(255));
+        mouse(p.canvas, QEvent::MouseButtonPress, at(p, 8, 16));
+        mouse(p.canvas, QEvent::MouseButtonRelease, at(p, 24, 16));
+        auto mask = paintTarget(*p.document.active(), true);
+        auto inv = mask.placement(mask.image.size()).inverted();
+        auto left = inv.map(QPointF(9, 16)), right = inv.map(QPointF(22, 16));
+        QVERIFY(mask.image.constScanLine(int(left.y()))[int(left.x())] >
+                mask.image.constScanLine(int(right.y()))[int(right.x())]);
+        QCOMPARE(p.document.active()->image, d.active()->image);
+        p.document.validateAssets();
+        p.history.undo();
+        QCOMPARE(p.document.active()->mask, d.active()->mask);
+    }
+    void transformedBrushExpansionAndOnePixelMask() {
+        auto d = patchDocument();
+        auto t = d.active()->transform();
+        t["rotation"] = 37;
+        t["flipY"] = true;
+        t["size"] = QJsonArray{12, 16};
+        d.active()->metadata["transform"] = t;
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Brush);
+        p.session.brushSize = 8;
+        p.session.hardness = 1;
+        p.session.foreground = Qt::blue;
+        auto old = p.document.active()->placement({8, 8});
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 16, 16));
+        QCOMPARE(renderDocument(p.document).pixelColor(16, 16), QColor(Qt::blue));
+        auto center = p.document.active()->placement(p.document.active()->image.size()).inverted()
+                          .map(old.map(QPointF(4, 4)));
+        QCOMPARE(p.document.active()->image.pixelColor(int(center.x()), int(center.y())), QColor(Qt::red));
+        p.history.undo();
+        p.document.active()->mask = QImage(1, 1, QImage::Format_Grayscale8);
+        p.document.active()->mask.fill(255);
+        p.document.active()->metadata["maskFile"] = p.document.activeId() + ".mask.png";
+        p.session.target = EditTarget::Mask;
+        p.session.foreground = Qt::black;
+        p.session.brushSize = 3;
+        const auto before = *p.document.active();
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 34, 36));
+        QVERIFY(p.document.active()->mask.size() != QSize(1, 1));
+        auto mask = paintTarget(*p.document.active(), true);
+        auto q = mask.placement(mask.image.size()).inverted().map(QPointF(34, 36));
+        QCOMPARE(mask.image.constScanLine(int(q.y()))[int(q.x())], uchar(0));
+        QVERIFY(mask.image.constScanLine(0)[0] > 0);
+        p.history.undo();
+        QCOMPARE(p.document.active()->mask, before.mask);
+        QCOMPARE(p.document.active()->metadata, before.metadata);
+    }
+    void transparentCloneUsesSourceOverAndMergedSourceCanGrow() {
+        auto d = smallDocument();
+        d.active()->image.setPixelColor(16, 16, QColor(0, 255, 0, 128));
+        d.active()->image.setPixelColor(17, 16, Qt::transparent);
+        EditorPage p(d);
+        ready(p);
+        p.canvas->setTool(Tool::Clone);
+        p.session.brushSize = 4;
+        p.session.hardness = 1;
+        p.session.cloneAligned = false;
+        QTest::mouseClick(p.canvas, Qt::LeftButton, Qt::AltModifier, at(p, 16, 16));
+        QTest::mouseClick(p.canvas, Qt::LeftButton, {}, at(p, 32, 32));
+        auto color = p.document.active()->image.pixelColor(32, 32);
+        QCOMPARE(color.alpha(), 255);
+        QVERIFY(std::abs(color.green() - 128) <= 1 && std::abs(color.red() - 127) <= 1);
+        QCOMPARE(p.document.active()->image.pixelColor(33, 32), QColor(Qt::red));
+        auto merged = patchDocument();
+        const auto target = merged.activeId();
+        QImage blue(8, 8, QImage::Format_RGBA8888_Premultiplied);
+        blue.fill(Qt::blue);
+        const auto upper = merged.addImage("Source", blue);
+        merged.find(upper)->setBounds({8, 8, 8, 8});
+        merged.metadata["activeLayerID"] = target;
+        EditorPage clone(merged);
+        ready(clone);
+        clone.canvas->setTool(Tool::Clone);
+        clone.session.cloneMerged = true;
+        clone.session.brushSize = 4;
+        clone.session.hardness = 1;
+        QTest::mouseClick(clone.canvas, Qt::LeftButton, Qt::AltModifier, at(clone, 12, 12));
+        QTest::mouseClick(clone.canvas, Qt::LeftButton, {}, at(clone, 48, 48));
+        QCOMPARE(renderDocument(clone.document).pixelColor(48, 48), QColor(Qt::blue));
+        clone.history.undo();
+        QCOMPARE(clone.document.active()->image, merged.active()->image);
+    }
+    void fillsGrowToCanvasOrSelectionAndRespectPlacedMasks() {
+        EditorWindow w;
+        QTemporaryDir dir;
+        auto d = patchDocument();
+        d.active()->mask = QImage(8, 8, QImage::Format_Grayscale8);
+        d.active()->mask.fill(255);
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        saveProject(d, dir.path() + "/Patch.comp");
+        w.openPath(dir.path() + "/Patch.comp");
+        auto p = page(w);
+        p->session.background = Qt::blue;
+        action(w, "Fill with Background")->trigger();
+        QCOMPARE(renderDocument(p->document).pixelColor(8, 8), QColor(Qt::blue));
+        QCOMPARE(renderDocument(p->document).pixelColor(56, 56), QColor(Qt::blue));
+        QCOMPARE(p->history.count(), 1);
+        p->history.undo();
+        QCOMPARE(p->document.active()->metadata, d.active()->metadata);
+        QCOMPARE(p->document.active()->mask, d.active()->mask);
+        p->session.selection = QImage(64, 64, QImage::Format_Grayscale8);
+        p->session.selection.fill(0);
+        for (int y = 8; y < 16; ++y)
+            std::fill_n(p->session.selection.scanLine(y) + 8, 8, uchar(128));
+        p->session.foreground = Qt::green;
+        action(w, "Fill with Foreground")->trigger();
+        auto result = renderDocument(p->document);
+        QCOMPARE(result.pixelColor(10, 10).alpha(), 128);
+        QCOMPARE(result.pixelColor(17, 10).alpha(), 0);
+        QCOMPARE(result.pixelColor(32, 32), QColor(Qt::red));
+        p->history.undo();
+        p->session.target = EditTarget::Mask;
+        p->session.foreground = Qt::white;
+        action(w, "Fill with Foreground")->trigger();
+        auto mask = paintTarget(*p->document.active(), true);
+        auto q = mask.placement(mask.image.size()).inverted().map(QPointF(10, 10));
+        QCOMPARE(mask.image.constScanLine(int(q.y()))[int(q.x())], uchar(128));
+        QCOMPARE(p->document.active()->image, d.active()->image);
+        p->document.validateAssets();
+        p->history.undo();
+        QCOMPARE(p->document.active()->mask, d.active()->mask);
+    }
+    void surfaceBudgetFailureLeavesOriginalIntact() {
+        auto d = patchDocument();
+        const auto before = *d.active();
+        QVERIFY_EXCEPTION_THROWN(growPaintSurface(*d.active(), false, {0, 0, MaxSide + 1, 8}), Error);
+        QVERIFY_EXCEPTION_THROWN(growPaintSurface(*d.active(), false, {0, 0, 20000, 20000}), Error);
+        QCOMPARE(d.active()->image, before.image);
+        QCOMPARE(d.active()->metadata, before.metadata);
+        auto tiny = *d.active();
+        tiny.image = QImage(30000, 1, QImage::Format_RGBA8888_Premultiplied);
+        tiny.setBounds({0, 0, 1, 1});
+        QVERIFY_EXCEPTION_THROWN(paintSurfaceBounds(tiny, QRectF(0, 0, 30000, 1)), Error);
     }
     void viewPreferencesCancelAndLanguageScreenshots() {
         EditorWindow w;

@@ -26,6 +26,7 @@
 #include <QtConcurrent/QtConcurrentMap>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <climits>
 #include <cmath>
@@ -338,6 +339,12 @@ void Canvas::cancelInteraction() {
     coverage_ = {};
     blurred_ = {};
     lasso_ = {};
+    if (!paintBefore_.id().isEmpty()) {
+        cloneOffset_ = cloneOffsetBefore_;
+        cloneStrokeReady_ = cloneReadyBefore_;
+        paintBefore_ = {};
+    }
+    cloneSample_ = {};
     endLayerEdit();
     emit editCanceled();
     update();
@@ -759,6 +766,9 @@ void Canvas::dab(QPointF point) {
     auto layer = document_->active();
     if (!layer)
         return;
+    const auto reach = session_->brushSize / 2;
+    if (!QRectF(QPointF(), document_->size()).adjusted(-reach, -reach, reach, reach).contains(point))
+        return;
     QImage &target = paintMask() ? layer->mask : layer->image;
     auto placement = layer->placement(target.size());
     if (paintMask() && layer->metadata.value("maskPlacement").isObject()) {
@@ -772,10 +782,12 @@ void Canvas::dab(QPointF point) {
                  sy = std::hypot(placement.m21(), placement.m22());
     double rx = session_->brushSize / (2 * std::max(0.001, sx)),
            ry = session_->brushSize / (2 * std::max(0.001, sy));
-    int x0 = std::max(0, int(std::floor(pixel.x() - rx))),
-        x1 = std::min(target.width() - 1, int(std::ceil(pixel.x() + rx)));
-    int y0 = std::max(0, int(std::floor(pixel.y() - ry))),
-        y1 = std::min(target.height() - 1, int(std::ceil(pixel.y() + ry)));
+    const auto bounds = QRectF(pixel.x() - rx, pixel.y() - ry, 2 * rx, 2 * ry)
+                            .intersected(QRectF(target.rect())).toAlignedRect();
+    if (bounds.isEmpty())
+        return;
+    const int x0 = bounds.left(), x1 = bounds.right(), y0 = bounds.top(), y1 = bounds.bottom();
+    const auto cloneInverse = cloneSamplePlacement_.inverted();
     target.detach();
     for (int y = y0; y <= y1; ++y)
         for (int x = x0; x <= x1; ++x) {
@@ -786,6 +798,8 @@ void Canvas::dab(QPointF point) {
                                 ? 1
                                 : (1 - radius) / std::max(0.001, 1 - session_->hardness);
             auto docPoint = placement.map(QPointF(x + 0.5, y + 0.5));
+            if (!QRectF(QPointF(), document_->size()).contains(docPoint))
+                continue;
             if (!session_->selection.isNull()) {
                 int px = int(std::floor(docPoint.x())), py = int(std::floor(docPoint.y()));
                 if (!session_->selection.valid(px, py))
@@ -801,12 +815,16 @@ void Canvas::dab(QPointF point) {
                 auto v = session_->tool == Tool::Blur    ? blurred_.constScanLine(y)[x]
                          : session_->tool == Tool::Erase ? 0
                                                          : qGray(session_->foreground.rgb());
-                target.scanLine(y)[x] =
-                    uchar(std::lround(original_.constScanLine(y)[x] * (1 - amount) + v * amount));
+                auto &value = target.scanLine(y)[x];
+                auto next = uchar(std::lround(original_.constScanLine(y)[x] * (1 - amount) +
+                                             v * amount));
+                paintChanged_ |= value != next;
+                value = next;
                 continue;
             }
             auto p = target.scanLine(y) + x * 4;
             auto base = original_.constScanLine(y) + x * 4;
+            const std::array<uchar, 4> before{p[0], p[1], p[2], p[3]};
             if (session_->tool == Tool::Blur) {
                 auto source = blurred_.constScanLine(y) + x * 4;
                 for (int c = 0; c < 4; ++c)
@@ -815,14 +833,14 @@ void Canvas::dab(QPointF point) {
                 for (int c = 0; c < 4; ++c)
                     p[c] = uchar(std::lround(base[c] * (1 - amount)));
             } else if (session_->tool == Tool::Clone) {
-                auto q = session_->cloneMerged ? docPoint + cloneOffset_
-                                               : inverse.map(docPoint + cloneOffset_);
-                int cx = int(q.x()), cy = int(q.y());
+                auto q = cloneInverse.map(docPoint + cloneOffset_);
+                int cx = int(std::floor(q.x())), cy = int(std::floor(q.y()));
                 if (!cloneSample_.valid(cx, cy))
                     continue;
                 auto source = cloneSample_.constScanLine(cy) + cx * 4;
+                const double sourceAlpha = source[3] / 255.0 * amount;
                 for (int c = 0; c < 4; ++c)
-                    p[c] = uchar(std::lround(base[c] * (1 - amount) + source[c] * amount));
+                    p[c] = uchar(std::lround(base[c] * (1 - sourceAlpha) + source[c] * amount));
             } else {
                 double alpha = amount * session_->foreground.alphaF();
                 for (int c = 0; c < 3; ++c) {
@@ -833,6 +851,7 @@ void Canvas::dab(QPointF point) {
                 }
                 p[3] = uchar(std::lround(base[3] * (1 - alpha) + 255 * alpha));
             }
+            paintChanged_ |= !std::equal(before.begin(), before.end(), p);
         }
     if (!paintMask() && session_->tool != Tool::Heal) {
         layer->metadata.remove("text");
@@ -940,15 +959,8 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     const auto previous = last_;
     last_ = toDocument(e->position());
     try {
-        if (!original_.isNull() &&
-            (session_->tool == Tool::Brush || session_->tool == Tool::Erase) &&
-            session_->brushSmoothing > 0) {
-            auto delta = last_ - previous;
-            const int steps = std::min(
-                1000, std::max(1, int(std::ceil(std::hypot(delta.x(), delta.y()) /
-                                                std::max(1.0, session_->brushSize * .1)))));
-            for (int i = 1; i <= steps; ++i)
-                dab(previous + delta * (double(i) / steps));
+        if (!original_.isNull() && !warp_ && brushTool()) {
+            paintSegment(previous, last_);
             refreshStroke();
         }
         if (!finishOverlayEdit(e))
@@ -962,6 +974,8 @@ void Canvas::mouseReleaseEvent(QMouseEvent *e) {
     coverage_ = {};
     blurred_ = {};
     warp_.reset();
+    paintBefore_ = {};
+    cloneSample_ = {};
     update();
 }
 void Canvas::keyPressEvent(QKeyEvent *e) {
