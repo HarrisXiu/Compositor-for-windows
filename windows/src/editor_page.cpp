@@ -6,6 +6,19 @@
 #include <QVBoxLayout>
 
 namespace compositor {
+namespace {
+// Roughly what a snapshot's metadata takes, without serializing it: the pixels dominate the
+// budget, and serializing hundreds of layers on every edit is what made editing slow.
+qint64 metadataEstimate(const Document &document) {
+    qint64 bytes = 512 + qint64(document.metadata.size()) * 64;
+    for (const auto &layer : document.layers) {
+        bytes += 256 + qint64(layer.metadata.size()) * 64;
+        if (const auto text = layer.metadata.value("text").toObject(); !text.isEmpty())
+            bytes += qint64(text.value("content").toString().size()) * 2 + 1024;
+    }
+    return bytes;
+}
+} // namespace
 class DocumentCommand final : public HistoryCommand {
   public:
     DocumentCommand(EditorPage *page, QString label, Document before, Document after,
@@ -24,8 +37,7 @@ class DocumentCommand final : public HistoryCommand {
     }
     void memory(QHash<qint64, qint64> &images, qint64 &metadata) const override {
         for (auto snapshot : {&before_, &after_}) {
-            metadata +=
-                QJsonDocument(snapshot->manifest()).toJson(QJsonDocument::Compact).size() * 2 + 512;
+            metadata += metadataEstimate(*snapshot);
             for (const auto &l : snapshot->layers) {
                 countImage(l.image, images);
                 countImage(l.mask, images);

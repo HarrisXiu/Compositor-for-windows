@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDialog>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -134,10 +135,13 @@ void EditorWindow::addPage(Document d, const QString &path) {
 }
 void EditorWindow::openPath(const QString &path) {
     try {
-        const auto absolute = QFileInfo(path).absoluteFilePath();
+        const auto absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
         for (int i = 0; i < tabs_->count(); ++i) {
             auto p = qobject_cast<EditorPage *>(tabs_->widget(i));
-            if (p && !p->path.isEmpty() && QFileInfo(p->path).absoluteFilePath() == absolute) {
+            // Windows paths name the same folder whatever their letter case.
+            if (p && !p->path.isEmpty() &&
+                QDir::cleanPath(QFileInfo(p->path).absoluteFilePath())
+                        .compare(absolute, Qt::CaseInsensitive) == 0) {
                 tabs_->setCurrentIndex(i);
                 return;
             }
@@ -240,27 +244,29 @@ void EditorWindow::save(bool saveAs) {
     }
     p->canvas->finishTextEditing(true);
     p->canvas->cancelInteraction();
-    QByteArray expected;
-    if (path == p->path) {
-        expected = projectFingerprint(path);
-        if (p->externalConflict || expected != p->monitor->fingerprint()) {
-            if (QMessageBox::warning(
-                    this, uiText("Project Changed on Disk"),
-                    uiText("Saving will replace external changes. Replace the project on disk?"),
-                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-                return;
-        }
-    } else
-        expected = projectFingerprint(path);
+    bool replace = path != p->path;
+    if (!replace && p->externalConflict) {
+        if (QMessageBox::warning(
+                this, uiText("Project Changed on Disk"),
+                uiText("Saving will replace external changes. Replace the project on disk?"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+        replace = true;
+    }
+    startSave(p, path, replace);
+}
+void EditorWindow::startSave(EditorPage *p, const QString &path, bool replaceChanges) {
     RecoveryStore::cleanStaging(QFileInfo(path).absolutePath());
     auto snapshot = p->document;
     const auto contentState = p->contentState;
+    const auto accepted = p->monitor->fingerprint();
     p->saving = true;
     p->monitor->setPaused(true);
     statusBar()->showMessage(uiText("Saving project in background…"));
     struct SaveResult {
         QByteArray fingerprint;
         QString error;
+        bool changedOnDisk = false;
     };
     auto watcher = new QFutureWatcher<SaveResult>(p);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
@@ -268,6 +274,18 @@ void EditorWindow::save(bool saveAs) {
                 auto result = watcher->result();
                 p->saving = false;
                 watcher->deleteLater();
+                if (result.changedOnDisk) {
+                    p->monitor->setPaused(false);
+                    statusBar()->clearMessage();
+                    // Includes a project left damaged on disk (a missing image, say): the
+                    // document open here can replace it.
+                    if (QMessageBox::warning(
+                            this, uiText("Project Changed on Disk"),
+                            uiText("Saving will replace external changes. Replace the project on disk?"),
+                            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+                        startSave(p, path, true);
+                    return;
+                }
                 if (!result.error.isEmpty()) {
                     p->monitor->setPaused(false);
                     showError(result.error);
@@ -286,9 +304,13 @@ void EditorWindow::save(bool saveAs) {
                 refreshPanels();
                 statusBar()->showMessage(uiText("Saved " + path), 5000);
             });
-    watcher->setFuture(QtConcurrent::run([snapshot, path, expected] {
+    // Hashing the project on disk is as slow as reading all of it, so it happens here too.
+    watcher->setFuture(QtConcurrent::run([snapshot, path, accepted, replaceChanges] {
         try {
-            return SaveResult{saveProject(snapshot, path, expected), {}};
+            const auto current = projectFingerprint(path);
+            if (!replaceChanges && !accepted.isEmpty() && current != accepted)
+                return SaveResult{{}, {}, true};
+            return SaveResult{saveProject(snapshot, path, current), {}};
         } catch (const std::exception &e) {
             return SaveResult{{}, QString::fromUtf8(e.what())};
         }

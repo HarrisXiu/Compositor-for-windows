@@ -38,7 +38,7 @@ class ProjectMonitor final : public QObject {
     QByteArray stamp_;
     QElapsedTimer audit_;
     qint64 auditInterval_ = 3000;
-    bool paused_ = false, loading_ = false;
+    bool paused_ = false, loading_ = false, baseline_ = false;
     int attempts_ = 0;
 };
 

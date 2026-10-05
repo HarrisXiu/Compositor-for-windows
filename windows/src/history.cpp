@@ -8,8 +8,12 @@ namespace compositor {
 qint64 HistoryStack::usage(int start) const {
     QHash<qint64, qint64> images;
     qint64 bytes = 0;
-    for (int i = start; i < count(); ++i)
-        static_cast<const HistoryCommand *>(command(i))->memory(images, bytes);
+    for (int i = start; i < count(); ++i) {
+        const auto &footprint = static_cast<const HistoryCommand *>(command(i))->footprint();
+        bytes += footprint.metadata;
+        for (auto it = footprint.images.cbegin(); it != footprint.images.cend(); ++it)
+            images.insert(it.key(), it.value());
+    }
     for (auto size : images)
         bytes += size;
     return bytes;
@@ -23,12 +27,19 @@ void HistoryStack::setMemoryBudget(qint64 bytes) {
 }
 void HistoryStack::push(HistoryCommand *command) {
     QUndoStack::push(command);
-    trim();
+    trim(true);
 }
-void HistoryStack::trim() {
+void HistoryStack::trim(bool keepNewest) {
     int remove = std::max(0, count() - 40);
-    while (remove < count() && usage(remove) > budget_)
-        ++remove;
+    const int limit = keepNewest && index() == count() ? count() - 1 : count();
+    // Commands share most of their images; counting each command alone is quick and, when even
+    // that fits, the shared count does too.
+    qint64 bound = 0;
+    for (int i = remove; i < count(); ++i)
+        bound += static_cast<const HistoryCommand *>(command(i))->footprint().total;
+    if (bound > budget_)
+        while (remove < limit && usage(remove) > budget_)
+            ++remove;
     if (!remove)
         return;
     // Preserve the redo chain after an undo. If trimming crosses the current state, those

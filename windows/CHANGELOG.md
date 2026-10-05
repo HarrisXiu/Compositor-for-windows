@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### 2026-10-05 — IO1–IO5 acceptance fixes, version remains 0.4.0
+
+- Editing no longer slows with the history budget: each command's memory is measured once, with a cheap metadata estimate, and the shared-image count runs only when a quick upper bound exceeds the budget (60 edits of a 400-layer document: 6.5 s before, 0.54 s now). An edit larger than the whole budget still keeps one undo step.
+- Project hashing no longer blocks the window: the open baseline and the save-time conflict check run in the background, the saved fingerprint is reused, and contents are rehashed every 60 seconds instead of every 3 (creation times now catch replaced files). A 157 MiB project saved with a 44 ms longest UI stall instead of about 2 s.
+- A project damaged on disk (a missing image, say) no longer blocks Save: it is reported as changed on disk and can be replaced after confirmation.
+- The same project opened by a path in another letter case, and recent files, are recognized as one on Windows.
+- PSD/PSB text: PostScript font names (BodoniMT, Arial-BoldMT…) resolve to installed families, style runs keep their fonts and colors, and the first baseline is placed where Photoshop puts it. A pixel mask on a vector fill without raster data stays in place; very complex vector paths are reported instead of stalling the import.
+
 ### 2026-10-05 — IO1–IO5, version remains 0.4.0
 
 - Added debounced external project/asset refresh with incomplete-write protection, dirty-tab confirmation and fingerprint checks around background saves.

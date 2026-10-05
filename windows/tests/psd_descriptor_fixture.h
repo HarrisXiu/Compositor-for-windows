@@ -122,6 +122,38 @@ inline QByteArray typeFixture(bool vertical = false, double shear = 0, bool para
     w.bytes(psdDescriptor("warp", {{"warpStyle", psdEnum("warpStyle", "warpNone")}}));
     return w.data;
 }
+// Upright paragraph text at (10, 20): "Hello world" whose second word is in another font and
+// color; 20-pixel type on 40-pixel lines. `fonts` are the PostScript names of the two fonts.
+inline QByteArray styledTypeFixture(const QByteArray &first = "SegoeUI",
+                                    const QByteArray &second = "Arial-BoldMT") {
+    PsdFixtureWriter w;
+    w.u16(1);
+    for (double v : {1.0, 0.0, 0.0, 1.0, 10.0, 20.0})
+        w.f64(v);
+    w.u16(50);
+    QByteArray engine = "<< /ResourceDict << /FontSet [ << /Name (" + first + ") >> << /Name (" + second +
+                        ") >> ] >> /EngineDict << /StyleRun << /RunArray [ << /StyleSheet << "
+                        "/StyleSheetData << /Font 0 /FontSize 20 /FillColor << /Values [1 0 0 0] >> "
+                        "/AutoLeading false /Leading 40 >> >> >> << /StyleSheet << /StyleSheetData << "
+                        "/Font 1 /FontSize 20 /FillColor << /Values [1 1 0 0] >> /AutoLeading false "
+                        "/Leading 40 >> >> >> ] /RunLengthArray [ 6 6 ] >> >> >>";
+    QList<std::pair<QByteArray, QByteArray>> items{
+        {"Txt ", psdText("Hello world")},
+        {"Ornt", psdEnum("Ornt", "Hrzn")},
+        {"EngineData", psdData(engine)},
+        {"bounds", psdObject("Rctn", {{"Left", psdDouble(0)},
+                                      {"Top ", psdDouble(0)},
+                                      {"Rght", psdDouble(200)},
+                                      {"Btom", psdDouble(100)}})},
+        {"boundingBox", psdObject("Rctn", {{"Left", psdDouble(0)},
+                                           {"Top ", psdDouble(4)},
+                                           {"Rght", psdDouble(110)},
+                                           {"Btom", psdDouble(24)}})}};
+    w.bytes(psdDescriptor("TxLr", items));
+    w.u16(1);
+    w.bytes(psdDescriptor("warp", {{"warpStyle", psdEnum("warpStyle", "warpNone")}}));
+    return w.data;
+}
 inline QHash<QByteArray, QByteArray> liveShapeFixture(int kind = 2) {
     auto fill = psdDescriptor("null", {{"Clr ", psdObject("RGBC", {{"Rd  ", psdDouble(30)},
                                                                    {"Grn ", psdDouble(100)},

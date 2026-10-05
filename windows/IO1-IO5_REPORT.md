@@ -82,3 +82,20 @@ After the fixes: 14 suites, **413 passes, 0 failures, 21 opt-in skips** (IO 20 +
 ### Known issue, deferred
 
 Rotated HEIC orientation is unverified. iPhone photos usually carry an `irot` rotation in the HEIF container as well as an EXIF orientation. If the Windows HEIF decoder already applies `irot`, the EXIF rotation applied afterwards turns such photos a second time; if it does not, the EXIF path may not be found. The pinned `example.heic` is not rotated. Verify with portrait iPhone photos (EXIF 6 and 8) before relying on HEIC orientation.
+
+## Second acceptance fixes — 2026-10-05
+
+Branch `fix/io-acceptance`, on top of `c49e249`, merged after the follow-up above. A second acceptance found these defects; each now has a regression test.
+
+| Area | Defect | Fix and measurement |
+| --- | --- | --- |
+| IO3 | Every command push serialized both document snapshots of all 40 commands to estimate memory: about 110 ms per edit on a 400-layer document, selection changes included. | Each command's footprint is measured once with a metadata estimate; the shared-image union runs only when an upper bound exceeds the budget. 60 edits: 6.5 s → 0.54 s. An edit that alone exceeds the budget keeps one undo step. |
+| IO1 | Opening hashed the whole project on the UI thread; Save hashed it before starting and again afterwards; idle projects were rehashed every 3 s (about 22% of a core on 157 MiB). | Baseline hashing runs in the background and changes made meanwhile are reported normally; the save job checks for external changes itself and reuses the saved fingerprint; the adaptive audit interval above is kept and metadata now includes creation times. 157 MiB: open 1.9 s → 1.2 s (load only), Save's longest UI stall about 2 s → 44 ms. |
+| IO1 | A project damaged on disk (a referenced image deleted) made Ctrl+S fail with "Project asset is missing". | Missing, invalid and unreadable assets contribute markers to the fingerprint, so the damage is reported as an external change and Save can replace it after confirmation. |
+| IO1/IO2 | Opening a project by a path differing only in letter case created a second tab watching and saving the same folder; recent files kept both spellings. | Project paths and recent files compare case-insensitively. |
+| IO5 | A vector fill/stroke layer without raster data but with a pixel mask: the mask laid out on the canvas was stretched over the new path-sized grid. | The mask keeps its canvas placement. |
+| IO5 (real file) | In the user's 5400×7200 poster PSD, the "get" text lost its last letter: the PostScript name `BodoniMT` was not matched to the installed `Bodoni MT` and Tahoma wrapped out of the frame. A line mixing two fonts kept only the first. Paragraph text with explicit leading sat 15 px low on every line (Qt places a fixed-height line's baseline at 0.8× the line height; Photoshop at the font's ascent). | PostScript names resolve to installed families; style runs become native font/color runs (only the size stays single); the layer is placed by the first baseline actually laid out. Against Photoshop's own composite: MAE 2.62 → 0.15, differing pixels 1.96% → 0.12%, every text line 0 px offset. |
+
+For the deferred HEIC issue above, WIC-encoded files carrying a HEIF rotation were checked: WIC returns rotated pixels and orientation 1, so EXIF orientation is not applied twice. A rotated iPhone sample remains untested.
+
+The pinned fixture results are unchanged for the vector and effects files. The delivered `psb-test` render in `artifacts/io1-io5` does not match what `c49e249` itself renders (MAE 11, rebuilt and rerun natively); the fixes change only its text region (0.12% of pixels).

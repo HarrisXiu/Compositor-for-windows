@@ -345,18 +345,20 @@ void text(PhotoshopEditable &out, QByteArrayView data) {
     auto sheet = walk(first, {"StyleSheet", "StyleSheetData"});
     if (!sheet.isValid())
         sheet = first;
-    auto values = walk(sheet, {"FillColor", "Values"}).toList();
-    double red = 0, green = 0, blue = 0;
-    if (values.size() >= 4) {
-        red = values[1].toDouble();
-        green = values[2].toDouble();
-        blue = values[3].toDouble();
-    } else if (values.size() >= 3) {
-        red = values[0].toDouble();
-        green = values[1].toDouble();
-        blue = values[2].toDouble();
-    }
     auto channel = [](double v) { return std::clamp(v > 1 ? v / 255 : v, 0.0, 1.0); };
+    // FillColor values are ARGB, or RGB in some writers; `fallback` when a run doesn't set it.
+    auto fillColor = [&](const QVariant &styleSheet, QColor fallback) {
+        auto values = walk(styleSheet, {"FillColor", "Values"}).toList();
+        if (values.size() >= 4)
+            return QColor::fromRgbF(channel(values[1].toDouble()), channel(values[2].toDouble()),
+                                    channel(values[3].toDouble()));
+        if (values.size() >= 3)
+            return QColor::fromRgbF(channel(values[0].toDouble()), channel(values[1].toDouble()),
+                                    channel(values[2].toDouble()));
+        return fallback;
+    };
+    const auto baseColor = fillColor(sheet, QColor(Qt::black));
+    const double red = baseColor.redF(), green = baseColor.greenF(), blue = baseColor.blueF();
     double fontSize =
         std::clamp(sheet.toMap().value("FontSize", 12).toDouble() * scale, 1.0, 2000.0);
     auto fonts = walk(engine, {"ResourceDict", "FontSet"}).toList();
@@ -374,11 +376,39 @@ void text(PhotoshopEditable &out, QByteArrayView data) {
         out.notes << "Full justification was converted to left alignment.";
     if (sheet.toMap().value("FauxBold").toBool() || sheet.toMap().value("FauxItalic").toBool())
         out.notes << "Faux bold or italic was omitted.";
-    for (int i = 1; i < runs.size(); ++i)
-        if (walk(runs[i], {"StyleSheet", "StyleSheetData"}) != sheet) {
-            out.notes << "Only the first text style was retained.";
-            break;
-        }
+    // Each style run keeps its own font and color; the native text has one size, the first.
+    QJsonArray fontRuns, colorRuns;
+    bool sizes = false;
+    const auto lengths = walk(engine, {"EngineDict", "StyleRun", "RunLengthArray"}).toList();
+    int position = 0;
+    for (int i = 0; i < runs.size() && i < lengths.size(); ++i) {
+        const int start = position, length = lengths[i].toInt();
+        require(length >= 0 && length <= 100001, "Invalid Photoshop text run");
+        position += length;
+        const int end = std::min(position, int(content.size()));
+        if (i == 0 || start >= end)
+            continue;
+        auto runSheet = walk(runs[i], {"StyleSheet", "StyleSheetData"});
+        auto map = runSheet.toMap();
+        int runIndex = map.value("Font", index).toInt();
+        auto runFont = runIndex >= 0 && runIndex < fonts.size()
+                           ? fonts[runIndex].toMap().value("Name").toString()
+                           : font;
+        if (!runFont.isEmpty() && runFont != font)
+            fontRuns.append(QJsonObject{{"location", start}, {"length", end - start}, {"fontName", runFont}});
+        auto runColor = fillColor(runSheet, baseColor);
+        if (runColor != baseColor)
+            colorRuns.append(QJsonObject{{"location", start},
+                                         {"length", end - start},
+                                         {"red", runColor.redF()},
+                                         {"green", runColor.greenF()},
+                                         {"blue", runColor.blueF()}});
+        if (map.contains("FontSize") &&
+            std::abs(map.value("FontSize").toDouble() * scale - fontSize) > .5)
+            sizes = true;
+    }
+    if (sizes)
+        out.notes << "Text runs keep their fonts and colors; only the first font size was kept.";
     out.text = {
         {"content", content},
         {"fontName", font},
@@ -395,6 +425,10 @@ void text(PhotoshopEditable &out, QByteArrayView data) {
         {"alignment", justification == 1   ? "Right"
                       : justification == 2 ? "Center"
                                            : "Left"}};
+    if (!fontRuns.isEmpty())
+        out.text["fontRuns"] = fontRuns;
+    if (!colorRuns.isEmpty())
+        out.text["colorRuns"] = colorRuns;
     auto bounds = rectangle(description.value("bounds").toMap()),
          glyph = rectangle(description.value("boundingBox").toMap());
     if (bounds.width() > glyph.width() + 4 && bounds.height() > glyph.height() + 4 &&

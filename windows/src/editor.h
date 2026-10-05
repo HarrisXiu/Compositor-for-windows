@@ -107,6 +107,9 @@ class EditorWindow : public QMainWindow {
     void openPhotoshop(const QString &path);
     void openRaw(const QString &path, bool asDocument);
     void save(bool saveAs = false);
+    // Saves in the background. Unless `replaceChanges`, a project changed on disk since it was
+    // opened or last saved is not overwritten: the user is asked first.
+    void startSave(EditorPage *page, const QString &path, bool replaceChanges);
     void exportImage();
     void refreshPanels();
     void rebuildLayerOrder();
