@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include "document.h"
 #include "preview_runner.h"
+#include <QHash>
 #include <QImage>
 #include <QJsonObject>
 #include <QObject>
@@ -65,6 +67,11 @@ class FilterPreview final : public QObject {
     bool haveSettings_ = false;
     QImage image_, shownImage_;
     QRectF extent_;
+    // A blur previews on the layer padded by its reach, so its spread past the edge shows; the
+    // padding only ever grows while the dialog is open. Each padding's layer, by its margin.
+    Layer grown_, shownLayer_;
+    int grownMargin_ = 0;
+    QHash<int, Layer> grownStates_;
     std::shared_ptr<Coverage> coverage_;
     PreviewRunner runner_;
     QTimer viewTimer_;

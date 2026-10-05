@@ -71,6 +71,8 @@ FilterPreview::FilterPreview(EditorPage *page, const QString &kind, bool asAdjus
         if (!asAdjustment) {
             image_ = layer->image;
             extent_ = layerExtent(*layer);
+            grown_ = *layer;
+            grownStates_[0] = grown_;
             coverage_ = std::make_shared<Coverage>();
             coverage_->selection = page->session.selection;
             coverage_->layer = *layer;
@@ -92,12 +94,21 @@ FilterPreview::FilterPreview(EditorPage *page, const QString &kind, bool asAdjus
     connect(&runner_, &PreviewRunner::ready, this, [this](const QImage &result) {
         if (stopped_ || !enabled_ || result.isNull())
             return;
-        shownScale_ = double(result.width()) / std::max(1, image_.width());
+        // The layer the result was computed from: as it was, or padded for a blur.
+        const auto state = grownStates_.value(result.text("grownMargin").toInt(), grown_);
+        shownLayer_ = state;
+        shownScale_ = double(result.width()) / std::max(1, state.image.width());
         shownImage_ = result;
         canvas_->setLivePreview(
-            [id = layerId_, result](Document &d) {
-                if (auto *layer = d.find(id))
+            [id = layerId_, result, transform = state.metadata.value("transform"), mask = state.mask,
+             placement = state.metadata.value("maskPlacement")](Document &d) {
+                if (auto *layer = d.find(id)) {
                     layer->image = result;
+                    layer->metadata["transform"] = transform;
+                    layer->mask = mask;
+                    if (placement.isObject())
+                        layer->metadata["maskPlacement"] = placement;
+                }
             },
             extent_, layerId_);
         ++shown_;
@@ -138,12 +149,12 @@ void FilterPreview::viewChanged() {
         viewTimer_.start();
 }
 QColor FilterPreview::shownColor(QPointF point) const {
-    const auto *layer = page_->document.find(layerId_);
-    if (!layer || shownImage_.isNull() || image_.isNull())
+    const auto &full = shownLayer_.image;
+    if (shownImage_.isNull() || full.isNull())
         return {};
-    const auto local = layer->placement(image_.size()).inverted().map(point);
-    const QPoint pixel(int(std::floor(local.x() * shownImage_.width() / image_.width())),
-                       int(std::floor(local.y() * shownImage_.height() / image_.height())));
+    const auto local = shownLayer_.placement(full.size()).inverted().map(point);
+    const QPoint pixel(int(std::floor(local.x() * shownImage_.width() / full.width())),
+                       int(std::floor(local.y() * shownImage_.height() / full.height())));
     if (!shownImage_.valid(pixel))
         return {};
     const auto color = shownImage_.pixelColor(pixel);
@@ -152,9 +163,7 @@ QColor FilterPreview::shownColor(QPointF point) const {
 double FilterPreview::wantedScale() const {
     if (image_.isNull())
         return 1;
-    const auto *layer = page_->document.find(layerId_);
-    const double box = layer ? layer->transform().value("size").toArray().at(0).toDouble(image_.width())
-                             : image_.width();
+    const double box = grown_.transform().value("size").toArray().at(0).toDouble(image_.width());
     const double screen = canvas_->screenScale() * box / std::max(1, image_.width());
     const double budget = std::sqrt(PreviewPixels / (double(image_.width()) * image_.height()));
     return std::clamp(std::min({1.0, screen, budget}), .03, 1.0);
@@ -212,9 +221,29 @@ void FilterPreview::schedule() {
     }
     if (!supported(kind_) || image_.isNull())
         return;
+    const int margin = int(std::ceil(filterMargin(kind_, settings_)));
+    if (margin > grownMargin_) {
+        try {
+            Layer grown = grownStates_.value(0);
+            growForFilter(grown, kind_, settings_);
+            grown_ = grown;
+            grownMargin_ = margin;
+            grownStates_[margin] = grown;
+            image_ = grown.image;
+            extent_ = layerExtent(grown);
+            auto coverage = std::make_shared<Coverage>();
+            coverage->selection = coverage_->selection;
+            coverage->documentSize = coverage_->documentSize;
+            coverage->layer = grown;
+            coverage_ = coverage;
+        } catch (const std::exception &e) {
+            emit failed(QString::fromUtf8(e.what()));
+            return;
+        }
+    }
     requestedScale_ = ladder(wantedScale());
     const auto scale = requestedScale_;
-    runner_.request([image = image_, coverage = coverage_, kind = kind_,
+    runner_.request([image = image_, coverage = coverage_, kind = kind_, grownMargin = grownMargin_,
                      settings = scaledPreviewSettings(kind_, settings_, scale), scale]() -> QImage {
         QImage source = image;
         if (scale < 1)
@@ -235,6 +264,7 @@ void FilterPreview::schedule() {
                 mask = selected.scaled(source.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             result = limitToSelection(source, result, mask);
         }
+        result.setText("grownMargin", QString::number(grownMargin));
         return result;
     });
 }

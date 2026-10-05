@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "image_operations.h"
+#include <QBuffer>
+#include <QImageWriter>
 #include <QJsonArray>
 #include <QPainter>
 #include <algorithm>
@@ -239,5 +241,23 @@ void flipCanvas(Document &d, bool horizontal) {
         return guideHorizontal != horizontal ? 2 * axis - value : value;
     });
     d.metadata["version"] = CurrentVersion;
+}
+QByteArray encodeJpeg(const QImage &image, int quality, const QColor &matte) {
+    require(!image.isNull(), "Nothing to export");
+    QImage flat(image.size(), QImage::Format_RGB32);
+    require(!flat.isNull(), "Not enough memory to export");
+    flat.fill(matte.isValid() ? matte.rgb() : QColor(Qt::white).rgb());
+    QPainter painter(&flat);
+    painter.drawImage(0, 0, image);
+    painter.end();
+    flat.setDotsPerMeterX(image.dotsPerMeterX());
+    flat.setDotsPerMeterY(image.dotsPerMeterY());
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    QImageWriter writer(&buffer, "JPEG");
+    writer.setQuality(std::clamp(quality, 1, 100));
+    require(writer.write(flat), "Cannot encode exported image");
+    return bytes;
 }
 } // namespace compositor

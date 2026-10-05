@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "document.h"
+#include <QByteArray>
 #include <QColor>
 #include <optional>
 namespace compositor {
@@ -18,4 +19,7 @@ void resizeImage(Document &document, QSize size, double resolution,
                  Qt::TransformationMode sampling = Qt::SmoothTransformation);
 QRect trimBounds(const QImage &image, const TrimOptions &options = {});
 void flipCanvas(Document &document, bool horizontal);
+// A JPEG of `image` as exported: transparency filled with `matte`, at `quality` (1-100), keeping the
+// image's resolution.
+QByteArray encodeJpeg(const QImage &image, int quality, const QColor &matte = Qt::white);
 } // namespace compositor

@@ -1164,17 +1164,23 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         });
         return;
     }
-    auto coverage = p->canvas->selectionForLayer(*layer);
-    if (kind == "Content-Aware Fill") {
-        require(!coverage.isNull(), "Select the area to fill first");
-        QByteArray bytes;
-        QBuffer buffer(&bytes);
-        buffer.open(QIODevice::WriteOnly);
-        coverage.save(&buffer, "PNG");
-        settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
-    }
+    const auto selection = p->canvas->session().selection;
+    const QRectF selected = p->canvas->selectionBounds();
+    if (kind == "Content-Aware Fill")
+        require(!selection.isNull() && !selected.isEmpty(), "Select the area to fill first");
     p->edit(kind, [&](Document &d) {
         auto l = d.active();
+        // A blur spreads past the layer's edge, and Content-Aware Fill fills all of a selection that
+        // reaches past it: the layer grows to hold them instead of cutting them off.
+        growForFilter(*l, kind, settings, kind == "Content-Aware Fill" ? selected : QRectF());
+        const auto coverage = layerSelection(d, *l, selection);
+        if (kind == "Content-Aware Fill") {
+            QByteArray bytes;
+            QBuffer buffer(&bytes);
+            buffer.open(QIODevice::WriteOnly);
+            coverage.save(&buffer, "PNG");
+            settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
+        }
         auto filtered = applyFilter(l->image, kind, settings);
         l->image = limitToSelection(l->image, filtered, coverage);
         l->metadata.remove("text");

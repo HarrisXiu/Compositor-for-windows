@@ -65,6 +65,8 @@ class EditorWindow : public QMainWindow {
   public:
     EditorWindow();
     void openPath(const QString &path);
+    // Exports the current project to `path`; a JPEG first asks for its quality, with a preview.
+    void exportTo(const QString &path);
 
   protected:
     void closeEvent(QCloseEvent *) override;

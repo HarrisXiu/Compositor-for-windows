@@ -770,5 +770,12 @@
   "Targeted: tone curve": "ターゲット調整：トーンカーブ",
   "Targeted: color mixer": "ターゲット調整：カラーミキサー",
   "Red, green, and blue of the pixel under the pointer.": "ポインター位置のピクセルの赤・緑・青。",
-  "Drag to set hue and saturation. Double-click to reset this wheel.": "ドラッグで色相と彩度を設定、ダブルクリックでこのホイールをリセットします。"
+  "Drag to set hue and saturation. Double-click to reset this wheel.": "ドラッグで色相と彩度を設定、ダブルクリックでこのホイールをリセットします。",
+  "Export JPEG": "JPEG を書き出し",
+  "Fit": "全体表示",
+  "Background for transparency": "透明部分の背景色",
+  "Updating…": "更新中…",
+  "Export": "書き出し",
+  "Nothing to export": "書き出す内容がありません",
+  "Not enough memory to export": "メモリが不足しているため書き出せません"
 }

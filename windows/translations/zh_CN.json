@@ -770,5 +770,12 @@
   "Targeted: tone curve": "目标调整：色调曲线",
   "Targeted: color mixer": "目标调整：混色器",
   "Red, green, and blue of the pixel under the pointer.": "指针下像素的红、绿、蓝值。",
-  "Drag to set hue and saturation. Double-click to reset this wheel.": "拖动以设置色相和饱和度，双击重置此色轮。"
+  "Drag to set hue and saturation. Double-click to reset this wheel.": "拖动以设置色相和饱和度，双击重置此色轮。",
+  "Export JPEG": "导出 JPEG",
+  "Fit": "适合窗口",
+  "Background for transparency": "透明区域背景色",
+  "Updating…": "正在更新…",
+  "Export": "导出",
+  "Nothing to export": "没有可导出的内容",
+  "Not enough memory to export": "内存不足，无法导出"
 }
