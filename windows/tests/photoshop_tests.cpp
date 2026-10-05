@@ -293,7 +293,7 @@ class PhotoshopTests : public QObject {
         clock.start();
         auto result = readPhotoshop(psdFixture({l}));
         QVERIFY(clock.elapsed() < 10000);
-        QVERIFY(result.conversions.join("\n").contains("too complex"));
+        QVERIFY(result.conversions.join("\n").contains("too many shape operations"));
         QCOMPARE(renderDocument(result.document).pixelColor(4, 4).alpha(), 255);
     }
     void unsupportedTypeRasterFallback() {
