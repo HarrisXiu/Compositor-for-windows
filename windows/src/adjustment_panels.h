@@ -62,4 +62,25 @@ class HueSpectrum final : public QWidget {
     int dragging_ = -1;
     double degreesAt(double x) const;
 };
+// A color grading wheel: hue around it (red at the right, counterclockwise), saturation outward
+// from the center. Dragging sets both; double-clicking resets the wheel.
+class ColorWheel final : public QWidget {
+  public:
+    explicit ColorWheel(QWidget *parent = nullptr);
+    double hue = 0, saturation = 0;
+    std::function<void(double hue, double saturation)> changed;
+    // Where (hue, saturation) is drawn, in widget coordinates.
+    QPointF pointOf(double hue, double saturation) const;
+    QSize sizeHint() const override;
+
+  protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void mouseDoubleClickEvent(QMouseEvent *) override;
+
+  private:
+    double radius() const;
+    void setFrom(QPointF position);
+};
 } // namespace compositor

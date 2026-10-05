@@ -766,5 +766,9 @@
   "Subtract from range": "从范围中减去",
   "Targeted adjustment": "目标调整",
   "Drag the triangles to set the input and output levels.": "拖动三角形以设置输入和输出色阶。",
-  "Drag the handles to set the range of hues this adjustment changes.": "拖动手柄以设置此调整影响的色相范围。"
+  "Drag the handles to set the range of hues this adjustment changes.": "拖动手柄以设置此调整影响的色相范围。",
+  "Targeted: tone curve": "目标调整：色调曲线",
+  "Targeted: color mixer": "目标调整：混色器",
+  "Red, green, and blue of the pixel under the pointer.": "指针下像素的红、绿、蓝值。",
+  "Drag to set hue and saturation. Double-click to reset this wheel.": "拖动以设置色相和饱和度，双击重置此色轮。"
 }

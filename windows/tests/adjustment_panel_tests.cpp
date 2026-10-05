@@ -14,10 +14,12 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
@@ -70,6 +72,12 @@ QPoint onCanvas(EditorPage &p, double x, double y) {
     const auto size = p.document.size();
     return QPoint(qRound((p.canvas->width() + inset - size.width() * p.canvas->zoom) / 2 + x * p.canvas->zoom),
                   qRound((p.canvas->height() + inset - size.height() * p.canvas->zoom) / 2 + y * p.canvas->zoom));
+}
+// The pointer moving over a widget with no button down, delivered to it directly.
+void hover(QWidget *widget, QPoint position) {
+    QMouseEvent e(QEvent::MouseMove, QPointF(position), QPointF(widget->mapToGlobal(position)),
+                  Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(widget, &e);
 }
 // Runs `check` inside the dialog `action` opens, then closes the dialog with OK or Cancel.
 void withDialog(QAction *action, bool accept, const std::function<void(QDialog *)> &check, bool *visited) {
@@ -289,6 +297,119 @@ class AdjustmentPanelTests : public QObject {
         }, &visited);
         QVERIFY(visited);
         QCOMPARE(page->history.count(), 0);
+    }
+    void colorWheelsSetHueAndSaturation() {
+        ColorWheel wheel;
+        wheel.resize(110, 110);
+        double hue = -1, saturation = -1;
+        wheel.changed = [&](double h, double s) {
+            hue = h;
+            saturation = s;
+        };
+        wheel.show();
+        // Right of the center is red; straight up is 90°; the rim is full saturation.
+        QTest::mouseClick(&wheel, Qt::LeftButton, {}, wheel.pointOf(0, 100).toPoint());
+        QVERIFY(hue <= 1 || hue >= 359);
+        QVERIFY(saturation >= 97);
+        QTest::mouseClick(&wheel, Qt::LeftButton, {}, wheel.pointOf(90, 50).toPoint());
+        QVERIFY(std::abs(hue - 90) <= 2);
+        QVERIFY(std::abs(saturation - 50) <= 3);
+        QTest::mouseDClick(&wheel, Qt::LeftButton, {}, wheel.rect().center());
+        QCOMPARE(saturation, 0.0);
+    }
+    void cameraRawIsASidePanelThatPreviewsOnTheCanvas() {
+        QTemporaryDir dir;
+        std::unique_ptr<EditorWindow> window(openWindow(dir, filled({64, 64}, QColor(90, 100, 110))));
+        window->resize(1200, 800);
+        auto page = currentPage(*window);
+        const auto before = page->document.active()->image;
+        bool visited = false;
+        withDialog(imageAdjustment(*window, "Camera Raw…"), false, [&](QDialog *dialog) {
+            // Down the window's right edge, most of its height.
+            const auto frame = window->frameGeometry();
+            QVERIFY(dialog->geometry().right() <= frame.right());
+            QVERIFY(dialog->geometry().left() > frame.center().x());
+            QVERIFY(dialog->height() >= frame.height() - 200);
+            dialog->findChild<QDoubleSpinBox *>("exposureControl")->setValue(1);
+            QTRY_VERIFY_WITH_TIMEOUT(page->canvas->hasLivePreview(), 5000);
+            // The readout shows the previewed color under the pointer.
+            auto readout = dialog->findChild<QLabel *>("cameraRawReadout");
+            QVERIFY(readout);
+            // Hovering the canvas (the window may still be settling into its new size).
+            int step = 0;
+            QTRY_VERIFY_WITH_TIMEOUT(
+                [&] {
+                    hover(page->canvas, onCanvas(*page, 31.5 + (step++ % 2), 32.5));
+                    return !readout->text().contains("—") &&
+                           readout->text().split(' ', Qt::SkipEmptyParts).value(1).toInt() > 120;
+                }(),
+                5000);
+            hover(page->canvas, onCanvas(*page, -4, 32.5)); // Beside the layer.
+            QVERIFY(readout->text().contains("—"));
+            // The color grading wheels drive their fields.
+            auto wheel = static_cast<ColorWheel *>(dialog->findChild<QWidget *>("gradeShadowsWheel"));
+            QVERIFY(wheel);
+            wheel->changed(200, 40);
+            QCOMPARE(dialog->findChild<QDoubleSpinBox *>("gradeShadowsHueControl")->value(), 200.0);
+            QCOMPARE(dialog->findChild<QDoubleSpinBox *>("gradeShadowsSaturationControl")->value(), 40.0);
+            dialog->findChild<QDoubleSpinBox *>("gradeShadowsHueControl")->setValue(30);
+            QCOMPARE(wheel->hue, 30.0);
+        }, &visited);
+        QVERIFY(visited);
+        QVERIFY(!page->canvas->hasLivePreview());
+        QCOMPARE(page->history.count(), 0);
+        QCOMPARE(page->document.active()->image, before);
+    }
+    void cameraRawTargetedDragsAndSamplingWorkOnTheCanvas() {
+        QImage image(60, 20, QImage::Format_RGBA8888_Premultiplied);
+        QPainter painter(&image);
+        painter.fillRect(0, 0, 20, 20, QColor(40, 40, 40));
+        painter.fillRect(20, 0, 20, 20, QColor(235, 235, 235));
+        painter.fillRect(40, 0, 20, 20, QColor(210, 30, 30));
+        painter.end();
+        QTemporaryDir dir;
+        std::unique_ptr<EditorWindow> window(openWindow(dir, image));
+        auto page = currentPage(*window);
+        bool visited = false;
+        withDialog(imageAdjustment(*window, "Camera Raw…"), true, [&](QDialog *dialog) {
+            auto tool = dialog->findChild<QComboBox *>("cameraPreviewTool");
+            QVERIFY(tool);
+            auto drag = [&](double x, int up) {
+                const auto from = onCanvas(*page, x, 10.5);
+                QTest::mousePress(page->canvas, Qt::LeftButton, {}, from);
+                QTest::mouseMove(page->canvas, from - QPoint(0, up));
+                QTest::mouseRelease(page->canvas, Qt::LeftButton, {}, from - QPoint(0, up));
+            };
+            auto value = [&](const QString &key) {
+                return dialog->findChild<QDoubleSpinBox *>(key + "Control")->value();
+            };
+            selectComboValue(tool, "Targeted: tone curve");
+            drag(10.5, 60); // The dark part: shadows up.
+            QVERIFY(value("curveShadows") > 15);
+            QCOMPARE(value("curveHighlights"), 0.0);
+            drag(30.5, -60); // The light part: highlights down.
+            QVERIFY(value("curveHighlights") < -15);
+            selectComboValue(tool, "Targeted: color mixer");
+            auto component = dialog->findChild<QComboBox *>("cameraTargetComponent");
+            QVERIFY(component && component->isVisible());
+            selectComboValue(component, "Saturation");
+            drag(50.5, 60); // Red: reds most, oranges a little, greens not at all.
+            QVERIFY(value("mixerRedsSaturation") > 15);
+            QVERIFY(value("mixerOrangesSaturation") > 0);
+            QVERIFY(value("mixerOrangesSaturation") < value("mixerRedsSaturation"));
+            QCOMPARE(value("mixerGreensSaturation"), 0.0);
+            // Point color sampling on the canvas.
+            selectComboValue(tool, "Sample point color");
+            QTest::mouseClick(page->canvas, Qt::LeftButton, {}, onCanvas(*page, 50.5, 10.5));
+            QCOMPARE(dialog->findChild<QComboBox *>("pointColorList")->count(), 1);
+            // Back to Preview: the canvas is the dialog's no longer.
+            selectComboValue(tool, "Preview");
+            QCOMPARE(page->history.count(), 0);
+        }, &visited);
+        QVERIFY(visited);
+        QCOMPARE(page->history.count(), 1);
+        // Shadows lifted: the dark part is lighter now.
+        QVERIFY(page->document.active()->image.pixelColor(10, 10).red() > 40);
     }
     void hueSaturationBandsEyedroppersAndTargetedDrag() {
         QImage image(40, 10, QImage::Format_RGBA8888_Premultiplied);

@@ -335,7 +335,7 @@ bool EditorWindow::canClose(EditorPage *p) {
 // Shows a dialog without blocking the window, and returns once it has ended. Editing is locked
 // meanwhile: the canvas only pans and zooms, and the panels, tool bars and tabs are disabled, so
 // the dialog's edit still applies to the layer it was opened on. Commands from the menus end it first.
-bool EditorWindow::runLiveDialog(QDialog &dialog) {
+bool EditorWindow::runLiveDialog(QDialog &dialog, bool sidePanel) {
     require(!liveDialog_, "Another dialog is already open");
     liveDialog_ = &dialog;
     setLiveEditingLocked(true);
@@ -348,9 +348,13 @@ bool EditorWindow::runLiveDialog(QDialog &dialog) {
     } unlock{this};
     dialog.setModal(false);
     dialog.adjustSize();
-    // Beside the canvas rather than over it.
+    // Beside the canvas rather than over it; a side panel runs down the window's right edge.
     const auto frame = frameGeometry();
-    dialog.move(std::max(frame.left(), frame.right() - dialog.width() - 24), frame.top() + 90);
+    if (sidePanel) {
+        dialog.resize(std::max(dialog.width(), 460), std::max(dialog.height(), frame.height() - 120));
+        dialog.move(std::max(frame.left(), frame.right() - dialog.width() - 8), frame.top() + 70);
+    } else
+        dialog.move(std::max(frame.left(), frame.right() - dialog.width() - 24), frame.top() + 90);
     QEventLoop loop;
     connect(&dialog, &QDialog::finished, &loop, &QEventLoop::quit);
     dialog.show();

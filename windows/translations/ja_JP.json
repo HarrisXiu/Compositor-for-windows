@@ -766,5 +766,9 @@
   "Subtract from range": "範囲から削除",
   "Targeted adjustment": "ターゲット調整",
   "Drag the triangles to set the input and output levels.": "三角形をドラッグして入力・出力レベルを設定します。",
-  "Drag the handles to set the range of hues this adjustment changes.": "ハンドルをドラッグして、この調整が変える色相の範囲を設定します。"
+  "Drag the handles to set the range of hues this adjustment changes.": "ハンドルをドラッグして、この調整が変える色相の範囲を設定します。",
+  "Targeted: tone curve": "ターゲット調整：トーンカーブ",
+  "Targeted: color mixer": "ターゲット調整：カラーミキサー",
+  "Red, green, and blue of the pixel under the pointer.": "ポインター位置のピクセルの赤・緑・青。",
+  "Drag to set hue and saturation. Double-click to reset this wheel.": "ドラッグで色相と彩度を設定、ダブルクリックでこのホイールをリセットします。"
 }

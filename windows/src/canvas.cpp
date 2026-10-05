@@ -1075,6 +1075,7 @@ void Canvas::mousePressEvent(QMouseEvent *e) {
 void Canvas::mouseMoveEvent(QMouseEvent *e) {
     hover_ = e->position();
     hovered_ = true;
+    emit pointerMoved(toDocument(hover_));
     temporaryPicker_ =
         brushTool() && session_->tool != Tool::Clone && (e->modifiers() & Qt::AltModifier);
     if (session_->tool == Tool::Eyedropper || temporaryPicker_) {

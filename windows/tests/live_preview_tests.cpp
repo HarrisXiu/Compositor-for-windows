@@ -251,6 +251,19 @@ class LivePreviewTests : public QObject {
         QVERIFY(!p.canvas->hasLivePreview());
         QCOMPARE(shown(p, 200, 200), QColor(100, 120, 140));
     }
+    void cameraRawPreviewsOnTheCanvasToo() {
+        EditorPage p(grayDocument({64, 64}, QColor(90, 100, 110)));
+        ready(p, 4);
+        FilterPreview preview(&p, "Camera Raw", false, false);
+        preview.update({{"exposure", 0.0}});
+        QTRY_VERIFY_WITH_TIMEOUT(preview.shownCount() > 0, 5000);
+        QCOMPARE(preview.shownColor({32, 32}), QColor(90, 100, 110));
+        const int count = preview.shownCount();
+        preview.update({{"exposure", 1.0}});
+        QTRY_VERIFY_WITH_TIMEOUT(preview.shownCount() > count, 5000);
+        QVERIFY(preview.shownColor({32, 32}).red() > 120);
+        QVERIFY(!preview.shownColor({-5, 5}).isValid());
+    }
     void aFilterPreviewStaysInsideTheSelection() {
         EditorPage p(grayDocument({64, 64}));
         ready(p, 4);

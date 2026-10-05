@@ -130,6 +130,8 @@ class Canvas : public QWidget {
     void aiCancelRequested();
     void aiRemovePointRequested();
     void selectionEdited(const QString &label, const QImage &before, const QImage &after);
+    // The pointer moved over the canvas, to this document point.
+    void pointerMoved(QPointF point);
     void sessionChanged();
     void cropRequested(QRect bounds);
     void error(const QString &message);

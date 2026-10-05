@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "filter_preview.h"
+#include "camera_raw.h"
 #include "canvas.h"
 #include "editor.h"
 #include "filters.h"
@@ -59,7 +60,7 @@ struct FilterPreview::Coverage {
 };
 
 bool FilterPreview::supported(const QString &kind) {
-    return kind != "Camera Raw" && kind != "Content-Aware Fill" && kind != "Invert";
+    return kind != "Content-Aware Fill" && kind != "Invert";
 }
 FilterPreview::FilterPreview(EditorPage *page, const QString &kind, bool asAdjustment,
                              bool editExisting, QObject *parent)
@@ -92,6 +93,7 @@ FilterPreview::FilterPreview(EditorPage *page, const QString &kind, bool asAdjus
         if (stopped_ || !enabled_ || result.isNull())
             return;
         shownScale_ = double(result.width()) / std::max(1, image_.width());
+        shownImage_ = result;
         canvas_->setLivePreview(
             [id = layerId_, result](Document &d) {
                 if (auto *layer = d.find(id))
@@ -134,6 +136,18 @@ void FilterPreview::update(const QJsonObject &settings) {
 void FilterPreview::viewChanged() {
     if (!stopped_ && enabled_ && haveSettings_ && !asAdjustment_)
         viewTimer_.start();
+}
+QColor FilterPreview::shownColor(QPointF point) const {
+    const auto *layer = page_->document.find(layerId_);
+    if (!layer || shownImage_.isNull() || image_.isNull())
+        return {};
+    const auto local = layer->placement(image_.size()).inverted().map(point);
+    const QPoint pixel(int(std::floor(local.x() * shownImage_.width() / image_.width())),
+                       int(std::floor(local.y() * shownImage_.height() / image_.height())));
+    if (!shownImage_.valid(pixel))
+        return {};
+    const auto color = shownImage_.pixelColor(pixel);
+    return color.alpha() ? color : QColor();
 }
 double FilterPreview::wantedScale() const {
     if (image_.isNull())
@@ -208,6 +222,12 @@ void FilterPreview::schedule() {
                                   std::max(1, int(std::lround(image.height() * scale))),
                                   Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         auto result = applyFilter(source, kind, settings);
+        if (kind == "Camera Raw") {
+            // The indicators are drawn over the canvas preview, never into the applied result.
+            if (settings.value("previewSharpenMask").toBool())
+                result = source;
+            cameraRawPreviewOverlay(result, settings);
+        }
         const auto &selected = coverage->get();
         if (!selected.isNull()) {
             auto mask = selected;

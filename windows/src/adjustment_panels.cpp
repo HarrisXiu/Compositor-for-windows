@@ -187,4 +187,68 @@ void HueSpectrum::mouseMoveEvent(QMouseEvent *e) {
 void HueSpectrum::mouseReleaseEvent(QMouseEvent *) {
     dragging_ = -1;
 }
+
+ColorWheel::ColorWheel(QWidget *parent) : QWidget(parent) {
+    setMinimumSize(96, 96);
+    setToolTip("Drag to set hue and saturation. Double-click to reset this wheel.");
+}
+QSize ColorWheel::sizeHint() const {
+    return {110, 110};
+}
+double ColorWheel::radius() const {
+    return std::min(width(), height()) / 2.0 - 6;
+}
+QPointF ColorWheel::pointOf(double degrees, double amount) const {
+    const double angle = degrees * 3.141592653589793 / 180, distance = amount / 100 * radius();
+    return QPointF(width() / 2.0 + std::cos(angle) * distance, height() / 2.0 - std::sin(angle) * distance);
+}
+void ColorWheel::paintEvent(QPaintEvent *) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QPointF center(width() / 2.0, height() / 2.0);
+    // Qt's conical gradient runs counterclockwise from the right, as the hue does.
+    QConicalGradient hues(center, 0);
+    for (int i = 0; i <= 12; ++i)
+        hues.setColorAt(i / 12.0, QColor::fromHsvF(float(std::fmod(i * 30.0, 360) / 360), 1, 1));
+    p.setPen(Qt::NoPen);
+    p.setBrush(hues);
+    p.drawEllipse(center, radius(), radius());
+    QRadialGradient fade(center, radius());
+    fade.setColorAt(0, QColor(128, 128, 128, 255));
+    fade.setColorAt(1, QColor(128, 128, 128, 0));
+    p.setBrush(fade);
+    p.drawEllipse(center, radius(), radius());
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(255, 255, 255, 200), 1));
+    p.drawEllipse(center, radius(), radius());
+    p.setPen(QPen(Qt::black, 1));
+    p.setBrush(Qt::white);
+    p.drawEllipse(pointOf(hue, saturation), 5, 5);
+}
+void ColorWheel::setFrom(QPointF position) {
+    const double dx = position.x() - width() / 2.0, dy = height() / 2.0 - position.y();
+    double degrees = std::atan2(dy, dx) * 180 / 3.141592653589793;
+    if (degrees < 0)
+        degrees += 360;
+    hue = std::round(degrees);
+    saturation = std::round(std::min(100.0, std::hypot(dx, dy) / std::max(1.0, radius()) * 100));
+    if (changed)
+        changed(hue, saturation);
+    update();
+}
+void ColorWheel::mousePressEvent(QMouseEvent *e) {
+    if (e->button() == Qt::LeftButton)
+        setFrom(e->position());
+}
+void ColorWheel::mouseMoveEvent(QMouseEvent *e) {
+    if (e->buttons() & Qt::LeftButton)
+        setFrom(e->position());
+}
+void ColorWheel::mouseDoubleClickEvent(QMouseEvent *) {
+    hue = 0;
+    saturation = 0;
+    if (changed)
+        changed(hue, saturation);
+    update();
+}
 } // namespace compositor

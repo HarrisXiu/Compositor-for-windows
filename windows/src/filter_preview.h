@@ -45,6 +45,8 @@ class FilterPreview final : public QObject {
     int shownCount() const {
         return shown_;
     }
+    // The previewed color at a document point (a filter's latest result); invalid off the layer.
+    QColor shownColor(QPointF point) const;
     // Stops: the canvas goes back to the document.
     void stop();
 
@@ -61,7 +63,7 @@ class FilterPreview final : public QObject {
     bool asAdjustment_, editExisting_, enabled_ = true, stopped_ = false;
     QJsonObject settings_;
     bool haveSettings_ = false;
-    QImage image_;
+    QImage image_, shownImage_;
     QRectF extent_;
     std::shared_ptr<Coverage> coverage_;
     PreviewRunner runner_;
