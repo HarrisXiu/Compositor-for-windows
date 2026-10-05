@@ -94,6 +94,8 @@ class EditorWindow : public QMainWindow {
     QPointer<QDialog> liveDialog_;
     bool runLiveDialog(QDialog &dialog, bool sidePanel = false);
     void setLiveEditingLocked(bool locked);
+    // A filter's full-resolution result being made off the UI thread: only the view can change meanwhile.
+    bool applyingFilter_ = false;
     QList<QPointer<QWidget>> lockedWidgets_;
     QTreeWidget *layers_;
     QComboBox *blend_;

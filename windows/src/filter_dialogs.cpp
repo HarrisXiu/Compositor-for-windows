@@ -59,6 +59,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QHBoxLayout>
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidget>
@@ -66,10 +67,17 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <optional>
 
 namespace compositor {
+// A slider-track color by hue in degrees (any number of turns), as the Mac's tracks pick them.
+static QColor hsvTrackColor(double degrees, double saturation, double brightness) {
+    double turns = degrees / 360;
+    turns -= std::floor(turns);
+    return QColor::fromHsvF(float(turns), float(saturation), float(brightness));
+}
 class CameraPreview final : public QLabel {
   public:
     int mode = 0;
@@ -147,6 +155,10 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         asAdjustment
             ? renderDocument(p->document, p->document.size().scaled(256, 256, Qt::KeepAspectRatio))
             : layer->image;
+    // The edit shows on the canvas itself while the dialog stays open, and until its result is
+    // applied; the small preview in the dialog remains only for what the canvas cannot show
+    // (Camera Raw).
+    std::unique_ptr<FilterPreview> live;
     if (kind != "Invert" && kind != "Content-Aware Fill") {
         QDialog dialog(this, Qt::Tool);
         dialog.setObjectName("filterDialog");
@@ -199,9 +211,6 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             layout->addWidget(preview);
         auto source = previewImage.scaled(256, kind == "Camera Raw" ? 160 : 256,
                                           Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        // The edit shows on the canvas itself while the dialog stays open; the small preview in the
-        // dialog remains only for what the canvas cannot show (Camera Raw).
-        std::unique_ptr<FilterPreview> live;
         // Levels, Curves and Hue/Saturation's own panels (histograms, handles, eyedroppers).
         std::unique_ptr<AdjustmentDialog> tools;
         if (FilterPreview::supported(kind)) {
@@ -1024,42 +1033,122 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             value("outputBlack", "Output black", 0, 0, 255, 0);
             value("outputWhite", "Output white", 255, 0, 255, 0);
         } else if (kind == "Black & White") {
+            // Each slider says how bright that family of colors becomes, so its track runs from the
+            // family's dark to its light, as on the Mac.
             const char *keys[] = {"reds", "yellows", "greens", "cyans", "blues", "magentas"};
+            const char *labels[] = {"Reds", "Yellows", "Greens", "Cyans", "Blues", "Magentas"};
             const double defaults[] = {40, 60, 40, 60, 20, 80};
-            for (int i = 0; i < 6; ++i)
-                value(keys[i], QString::fromLatin1(keys[i]), defaults[i], -200, 300);
+            for (int i = 0; i < 6; ++i) {
+                value(keys[i], labels[i], defaults[i], -200, 300, 0);
+                parameters[keys[i]]->setTrack({hsvTrackColor(i * 60, 0.55, 0.18),
+                                               hsvTrackColor(i * 60, 0.35, 0.95)});
+            }
             check("tint", "Tint", false);
-            value("tintHue", "Tint hue", 40, 0, 360);
-            value("tintSaturation", "Tint saturation", 20, 0, 100);
+            value("tintHue", "Hue", 40, 0, 360, 0);
+            value("tintSaturation", "Saturation", 20, 0, 100, 0);
+            // Tint's hue and saturation only matter, and only show, while Tint is on.
+            auto tint = dialog.findChild<QCheckBox *>("tintControl");
+            auto hue = parameters["tintHue"], saturation = parameters["tintSaturation"];
+            const auto showTint = [form, tint, hue, saturation] {
+                form->setRowVisible(hue, tint->isChecked());
+                form->setRowVisible(saturation, tint->isChecked());
+            };
+            const auto colorSaturation = [hue, saturation] {
+                saturation->setTrack({QColor::fromRgbF(0.55f, 0.55f, 0.56f),
+                                      hsvTrackColor(hue->value(), 0.9, 0.9)});
+            };
+            connect(tint, &QCheckBox::toggled, &dialog, showTint);
+            connect(hue, &ParameterControl::valueChanged, &dialog, colorSaturation);
+            showTint();
+            colorSaturation();
         } else if (kind == "Color Balance") {
-            for (auto key : {"shadowCyanRed", "shadowMagentaGreen", "shadowYellowBlue",
-                             "midCyanRed", "midMagentaGreen", "midYellowBlue", "highlightCyanRed",
-                             "highlightMagentaGreen", "highlightYellowBlue"})
-                value(key, QString::fromLatin1(key), 0, -100, 100);
+            // Each tonal range moves one color toward its opposite; the tracks show which way.
+            const QList<QColor> tracks[] = {
+                {QColor::fromRgbF(0.10f, 0.72f, 0.80f), QColor::fromRgbF(0.86f, 0.18f, 0.20f)},
+                {QColor::fromRgbF(0.80f, 0.22f, 0.70f), QColor::fromRgbF(0.24f, 0.70f, 0.30f)},
+                {QColor::fromRgbF(0.95f, 0.82f, 0.18f), QColor::fromRgbF(0.22f, 0.40f, 0.92f)}};
+            const char *axes[] = {"CyanRed", "MagentaGreen", "YellowBlue"};
+            const char *labels[] = {"Cyan / Red", "Magenta / Green", "Yellow / Blue"};
+            const std::pair<const char *, const char *> ranges[] = {
+                {"shadow", "Shadows"}, {"mid", "Midtones"}, {"highlight", "Highlights"}};
+            for (const auto &[prefix, heading] : ranges) {
+                auto title = new QLabel(heading);
+                QFont bold = title->font();
+                bold.setBold(true);
+                title->setFont(bold);
+                form->addRow(title);
+                for (int axis = 0; axis < 3; ++axis) {
+                    const auto key = QString::fromLatin1(prefix) + QString::fromLatin1(axes[axis]);
+                    value(key, labels[axis], 0, -100, 100, 0);
+                    parameters[key]->setTrack(tracks[axis]);
+                }
+            }
             check("preserveLuminosity", "Preserve luminosity", true);
         } else if (kind == "Gradient Map") {
             if (!settings.contains("shadows"))
                 settings["shadows"] = QJsonObject{{"red", 0}, {"green", 0}, {"blue", 0}};
             if (!settings.contains("highlights"))
                 settings["highlights"] = QJsonObject{{"red", 1}, {"green", 1}, {"blue", 1}};
-            for (auto key : {"shadows", "highlights"}) {
-                auto button = new QPushButton(QString::fromLatin1(key));
-                form->addRow(button);
-                connect(button, &QPushButton::clicked, &dialog, [&, key] {
-                    auto old = settings.value(QLatin1String(key)).toObject();
-                    auto color = QColorDialog::getColor(
-                        QColor::fromRgbF(old.value("red").toDouble(), old.value("green").toDouble(),
-                                         old.value("blue").toDouble()),
-                        &dialog);
+            const auto endColor = [&settings](const QString &key) {
+                const auto end = settings.value(key).toObject();
+                return QColor::fromRgbF(end.value("red").toDouble(), end.value("green").toDouble(),
+                                        end.value("blue").toDouble());
+            };
+            // The map's two ends as a bar, from what the darkest tones become to the lightest,
+            // and a swatch for each end that opens the color picker.
+            auto bar = new QFrame;
+            bar->setObjectName("gradientMapBar");
+            bar->setFixedHeight(20);
+            form->addRow(bar);
+            auto ends = new QHBoxLayout;
+            const QStringList keys{"shadows", "highlights"};
+            QList<QPushButton *> swatches;
+            for (const auto &key : keys) {
+                auto button = new QPushButton(key == "shadows" ? "Shadows" : "Highlights");
+                button->setObjectName(key + "Swatch");
+                button->setIconSize({22, 22});
+                button->setFlat(true);
+                ends->addWidget(button);
+                swatches.append(button);
+            }
+            ends->addStretch();
+            form->addRow(ends);
+            const auto refresh = [&settings, endColor, bar, swatches, keys] {
+                auto dark = endColor("shadows"), light = endColor("highlights");
+                if (settings.value("reversed").toBool())
+                    std::swap(dark, light);
+                bar->setStyleSheet(
+                    QString("#gradientMapBar{border:1px solid #444;border-radius:4px;background:"
+                            "qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1,stop:1 %2);}")
+                        .arg(dark.name(), light.name()));
+                for (int i = 0; i < swatches.size(); ++i) {
+                    QPixmap chip(22, 22);
+                    chip.fill(Qt::transparent);
+                    QPainter painter(&chip);
+                    painter.setRenderHint(QPainter::Antialiasing);
+                    painter.setPen(QPen(Qt::black, 1));
+                    painter.setBrush(endColor(keys[i]));
+                    painter.drawRoundedRect(QRectF(0.5, 0.5, 21, 21), 5, 5);
+                    painter.setPen(QPen(Qt::white, 1.5));
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRoundedRect(QRectF(2, 2, 18, 18), 4, 4);
+                    swatches[i]->setIcon(chip);
+                }
+            };
+            for (int i = 0; i < swatches.size(); ++i)
+                connect(swatches[i], &QPushButton::clicked, &dialog, [&, key = keys[i], endColor, refresh] {
+                    auto color = QColorDialog::getColor(endColor(key), &dialog);
                     if (color.isValid()) {
-                        settings[QLatin1String(key)] = QJsonObject{{"red", color.redF()},
-                                                                   {"green", color.greenF()},
-                                                                   {"blue", color.blueF()}};
+                        settings[key] = QJsonObject{{"red", color.redF()},
+                                                    {"green", color.greenF()},
+                                                    {"blue", color.blueF()}};
+                        refresh();
                         debounce.start(100);
                     }
                 });
-            }
             check("reversed", "Reverse", false);
+            connect(dialog.findChild<QCheckBox *>("reversedControl"), &QCheckBox::toggled, &dialog, refresh);
+            refresh();
         }
         // Puts the selected range's (or channel's) values into the fields.
         std::function<void()> loadRange = [] {};
@@ -1120,12 +1209,12 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         updatePreview();
         // However the dialog ends, the canvas goes back to the document before anything is applied.
-        connect(&dialog, &QDialog::finished, &dialog, [&live] {
-            if (live)
+        // Canceling takes the preview away at once; OK leaves it up until the result replaces it.
+        connect(&dialog, &QDialog::finished, &dialog, [&live](int result) {
+            if (live && result != QDialog::Accepted)
                 live->stop();
         });
         const bool accepted = runLiveDialog(dialog, kind == "Camera Raw");
-        live.reset();
         if (!accepted)
             return;
         // Nothing else could have been edited meanwhile; check all the same.
@@ -1136,6 +1225,7 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
     if (kind == "Camera Raw")
         settings["visualizePointColor"] = -1;
     if (asAdjustment) {
+        live.reset();
         auto a = makeAdjustment(kind, settings);
         p->edit(editExisting ? "Edit Adjustment" : "New Adjustment", [&](Document &d) {
             if (editExisting) {
@@ -1168,23 +1258,65 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
     const QRectF selected = p->canvas->selectionBounds();
     if (kind == "Content-Aware Fill")
         require(!selection.isNull() && !selected.isEmpty(), "Select the area to fill first");
-    p->edit(kind, [&](Document &d) {
-        auto l = d.active();
-        // A blur spreads past the layer's edge, and Content-Aware Fill fills all of a selection that
-        // reaches past it: the layer grows to hold them instead of cutting them off.
-        growForFilter(*l, kind, settings, kind == "Content-Aware Fill" ? selected : QRectF());
-        const auto coverage = layerSelection(d, *l, selection);
-        if (kind == "Content-Aware Fill") {
-            QByteArray bytes;
-            QBuffer buffer(&bytes);
-            buffer.open(QIODevice::WriteOnly);
-            coverage.save(&buffer, "PNG");
-            settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
+    // As on the Mac, the full-resolution result is made off the UI thread, from a snapshot of the
+    // document: the window keeps painting, the preview stays on the canvas, and only the view can
+    // change until the result replaces the layer as one undo step.
+    struct Result {
+        Layer layer;
+        QString error;
+    };
+    auto job = QtConcurrent::run([snapshot = p->document, kind, settings, selection, selected]() mutable {
+        Result result;
+        try {
+            auto l = snapshot.active();
+            // A blur spreads past the layer's edge, and Content-Aware Fill fills all of a selection
+            // that reaches past it: the layer grows to hold them instead of cutting them off.
+            growForFilter(*l, kind, settings, kind == "Content-Aware Fill" ? selected : QRectF());
+            const auto coverage = layerSelection(snapshot, *l, selection);
+            if (kind == "Content-Aware Fill") {
+                QByteArray bytes;
+                QBuffer buffer(&bytes);
+                buffer.open(QIODevice::WriteOnly);
+                coverage.save(&buffer, "PNG");
+                settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
+            }
+            auto filtered = applyFilter(l->image, kind, settings);
+            l->image = limitToSelection(l->image, filtered, coverage);
+            l->metadata.remove("text");
+            l->metadata.remove("shape");
+            result.layer = *l;
+        } catch (const std::exception &e) {
+            result.error = QString::fromUtf8(e.what());
         }
-        auto filtered = applyFilter(l->image, kind, settings);
-        l->image = limitToSelection(l->image, filtered, coverage);
-        l->metadata.remove("text");
-        l->metadata.remove("shape");
+        return result;
     });
+    if (!job.isFinished()) {
+        applyingFilter_ = true;
+        setLiveEditingLocked(true);
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        statusBar()->showMessage(uiText("Applying %1…").arg(uiText(kind)));
+        struct Unlock {
+            EditorWindow *window;
+            ~Unlock() {
+                QApplication::restoreOverrideCursor();
+                window->statusBar()->clearMessage();
+                window->setLiveEditingLocked(false);
+                window->applyingFilter_ = false;
+            }
+        } unlock{this};
+        QFutureWatcher<Result> watcher;
+        QEventLoop loop;
+        connect(&watcher, &QFutureWatcher<Result>::finished, &loop, &QEventLoop::quit);
+        watcher.setFuture(job);
+        if (!job.isFinished())
+            loop.exec();
+    }
+    auto result = job.result();
+    live.reset();
+    require(result.error.isEmpty(), result.error);
+    // Only the view could change meanwhile; check all the same.
+    require(page() == p && p->document.activeId() == targetId,
+            "The layer changed while the filter was applied");
+    p->edit(kind, [&](Document &d) { *d.active() = std::move(result.layer); });
 }
 } // namespace compositor

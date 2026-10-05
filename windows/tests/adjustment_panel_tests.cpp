@@ -6,6 +6,7 @@
 #include "filters.h"
 #include "language.h"
 #include "live_dialog.h"
+#include "parameter_control.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -19,6 +20,7 @@
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QSlider>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -268,6 +270,58 @@ class AdjustmentPanelTests : public QObject {
         page->canvas->setTool(Tool::Brush);
         QTest::mouseClick(page->canvas, Qt::LeftButton, {}, onCanvas(*page, 10.5, 2.5));
         QCOMPARE(page->history.count(), 2);
+    }
+    void colorBalanceBlackWhiteAndGradientMapShowTheirColors() {
+        QTemporaryDir dir;
+        std::unique_ptr<EditorWindow> window(openWindow(dir, ramp()));
+        auto page = currentPage(*window);
+        const auto track = [](QDialog *dialog, const QString &key) {
+            auto parameter = dialog->findChild<QWidget *>(key + "ControlParameter");
+            return parameter ? static_cast<ParameterControl *>(parameter)->slider()->styleSheet() : QString();
+        };
+        bool visited = false;
+        // Color Balance: three titled tonal ranges, each axis colored from one color to its opposite.
+        withDialog(imageAdjustment(*window, "Color Balance…"), false, [&](QDialog *dialog) {
+            QStringList titles;
+            for (auto label : dialog->findChildren<QLabel *>())
+                titles << label->text();
+            for (auto heading : {"Shadows", "Midtones", "Highlights"})
+                QVERIFY2(titles.contains(heading), heading);
+            for (auto range : {"shadow", "mid", "highlight"})
+                for (auto axis : {"CyanRed", "MagentaGreen", "YellowBlue"})
+                    QVERIFY(track(dialog, QString(range) + axis).contains("qlineargradient"));
+            QVERIFY(track(dialog, "midCyanRed").contains(QColor::fromRgbF(0.86f, 0.18f, 0.20f).name()));
+        }, &visited);
+        QVERIFY(visited);
+        // Black & White: each family runs dark to light in its hue; Tint's controls show only while on.
+        visited = false;
+        withDialog(imageAdjustment(*window, "Black & White…"), false, [&](QDialog *dialog) {
+            for (auto key : {"reds", "yellows", "greens", "cyans", "blues", "magentas"})
+                QVERIFY(track(dialog, key).contains("qlineargradient"));
+            auto hue = dialog->findChild<QWidget *>("tintHueControlParameter");
+            auto tint = dialog->findChild<QCheckBox *>("tintControl");
+            QVERIFY(hue && tint && !tint->isChecked());
+            QVERIFY(!hue->isVisibleTo(dialog));
+            tint->setChecked(true);
+            QVERIFY(hue->isVisibleTo(dialog));
+            const auto before = track(dialog, "tintSaturation");
+            dialog->findChild<QDoubleSpinBox *>("tintHueControl")->setValue(200);
+            QVERIFY(track(dialog, "tintSaturation") != before);
+        }, &visited);
+        QVERIFY(visited);
+        // Gradient Map: a bar from the shadow end to the highlight end, swapped by Reverse.
+        visited = false;
+        withDialog(imageAdjustment(*window, "Gradient Map…"), false, [&](QDialog *dialog) {
+            auto bar = dialog->findChild<QFrame *>("gradientMapBar");
+            QVERIFY(bar);
+            QVERIFY(bar->styleSheet().contains("stop:0 #000000,stop:1 #ffffff"));
+            auto swatch = dialog->findChild<QPushButton *>("shadowsSwatch");
+            QVERIFY(swatch && !swatch->icon().isNull());
+            dialog->findChild<QCheckBox *>("reversedControl")->setChecked(true);
+            QVERIFY(bar->styleSheet().contains("stop:0 #ffffff,stop:1 #000000"));
+        }, &visited);
+        QVERIFY(visited);
+        QCOMPARE(page->history.count(), 0);
     }
     void curvesShowTheHistogramAndEditPoints() {
         QTemporaryDir dir;

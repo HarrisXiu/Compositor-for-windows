@@ -18,6 +18,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSlider>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -380,6 +381,66 @@ class LivePreviewTests : public QObject {
         QVERIFY(page->document.active()->image != before);
         page->history.undo();
         QCOMPARE(page->document.active()->image, before);
+    }
+    void okAppliesInTheBackgroundWithThePreviewStillShown() {
+        // Big enough that the full-resolution blur takes a while.
+        auto d = Document::create({1200, 1200});
+        QImage noise(1200, 1200, QImage::Format_RGBA8888_Premultiplied);
+        for (int y = 0; y < noise.height(); ++y) {
+            auto row = reinterpret_cast<quint32 *>(noise.scanLine(y));
+            for (int x = 0; x < noise.width(); ++x)
+                row[x] = 0xff000000u | quint32(((x ^ y) & 0xff) * 0x010101);
+        }
+        d.addImage("Noise", noise);
+        QTemporaryDir dir;
+        std::unique_ptr<EditorWindow> window(openWindow(dir, d));
+        auto page = currentPage(*window);
+        page->canvas->waitForRendering();
+        auto blur = menuAction(*window, "Gaussian Blur…");
+        QVERIFY(blur);
+        // While the result is made, the window keeps running its event loop: the preview is still
+        // shown, only the view is free, and other commands are ignored.
+        bool applying = false, previewShown = false, locked = false, undoIgnored = true;
+        QTimer probe;
+        probe.setInterval(0);
+        connect(&probe, &QTimer::timeout, [&] {
+            if (activeLiveDialog() || !window->statusBar()->currentMessage().startsWith("Applying"))
+                return;
+            applying = true;
+            previewShown = previewShown || page->canvas->hasLivePreview();
+            locked = locked || (page->canvas->inputLocked() &&
+                                !window->findChild<QTabWidget *>()->tabBar()->isEnabled());
+            menuAction(*window, "Undo")->trigger();
+            undoIgnored = undoIgnored && page->history.count() == 0;
+        });
+        bool visited = false;
+        QTimer::singleShot(20, [&] {
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
+            QVERIFY(dialog);
+            auto closeAtEnd = qScopeGuard([dialog] {
+                if (dialog->isVisible())
+                    dialog->reject();
+            });
+            dialog->findChild<QDoubleSpinBox *>("radiusControl")->setValue(30);
+            QTRY_VERIFY_WITH_TIMEOUT(page->canvas->hasLivePreview(), 10000);
+            visited = true;
+            probe.start();
+            dialog->accept();
+        });
+        blur->trigger();
+        probe.stop();
+        QVERIFY(visited);
+        QVERIFY(applying);
+        QVERIFY(previewShown);
+        QVERIFY(locked);
+        QVERIFY(undoIgnored);
+        QVERIFY(!page->canvas->hasLivePreview());
+        QVERIFY(!page->canvas->inputLocked());
+        QVERIFY(window->findChild<QTabWidget *>()->tabBar()->isEnabled());
+        QCOMPARE(page->history.count(), 1);
+        QCOMPARE(page->history.undoText(), QString("Gaussian Blur"));
+        // The blur grew the layer past the canvas, as it does when applied directly.
+        QVERIFY(page->document.active()->image.width() > 1200);
     }
     void cancelingALiveDialogLeavesNoTrace() {
         QTemporaryDir dir;

@@ -19,9 +19,10 @@ namespace compositor {
 void EditorWindow::externalReload(EditorPage *p, Document source, QByteArray fingerprint) {
     if (p->saving || p->monitor->fingerprint() != fingerprint)
         return;
-    // A filter dialog previewing on the canvas would apply to a replaced document: wait for it too.
+    // A filter dialog previewing on the canvas, or a filter being applied, would apply to a replaced
+    // document: wait for them too.
     if (p->interacting() || QApplication::activeModalWidget() || p->canvas->textEditing() ||
-        liveDialog_) {
+        liveDialog_ || applyingFilter_) {
         QPointer<EditorPage> guard(p);
         QTimer::singleShot(500, this, [this, guard, source, fingerprint] {
             if (guard)

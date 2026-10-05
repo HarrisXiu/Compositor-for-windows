@@ -793,5 +793,11 @@
   "Export": "导出",
   "Nothing to export": "没有可导出的内容",
   "Not enough memory to export": "内存不足，无法导出",
-  "Downloads come from the project's GitHub release ai-models-v1. Matching local files can also be imported.": "模型从项目的 GitHub 发布页 ai-models-v1 下载，也可以导入与清单匹配的本地文件。"
+  "Downloads come from the project's GitHub release ai-models-v1. Matching local files can also be imported.": "模型从项目的 GitHub 发布页 ai-models-v1 下载，也可以导入与清单匹配的本地文件。",
+  "Cyan / Red": "青色 / 红色",
+  "Magenta / Green": "洋红 / 绿色",
+  "Yellow / Blue": "黄色 / 蓝色",
+  "Applying %1…": "正在应用%1…",
+  "Wait for the filter to finish": "请等待滤镜完成",
+  "The layer changed while the filter was applied": "应用滤镜期间图层已改变"
 }

@@ -95,6 +95,9 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
     Shortcuts::instance().registerAction(a, "menu/" + menuSource + "/" + title, "Menus");
     connect(a, &QAction::triggered, this, [this, callback, a] {
         try {
+            // While a filter's result is being made, only the view can change.
+            if (applyingFilter_ && !a->property("keepsLiveDialog").toBool())
+                return;
             if (aiSelectionDialog_)
                 aiSelectionDialog_->reject();
             // Any command but changing the view leaves the dialog and what it previews behind.
@@ -400,6 +403,10 @@ void EditorWindow::crop() {
 bool EditorWindow::canClose(EditorPage *p) {
     if (!p)
         return true;
+    if (applyingFilter_) {
+        showError("Wait for the filter to finish");
+        return false;
+    }
     p->canvas->finishTextEditing(true);
     p->canvas->commitFloatingSelection();
     if (p->saving || p->autosaving) {
@@ -472,6 +479,10 @@ void EditorWindow::setLiveEditingLocked(bool locked) {
         }
 }
 void EditorWindow::closeEvent(QCloseEvent *e) {
+    if (applyingFilter_) {
+        e->ignore();
+        return;
+    }
     if (liveDialog_)
         liveDialog_->reject();
     if (aiSelectionDialog_)
