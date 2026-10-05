@@ -12,6 +12,7 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QtConcurrent/QtConcurrentRun>
+#include <algorithm>
 
 namespace compositor {
 static QByteArray projectStamp(const QString &path) {
@@ -55,11 +56,16 @@ QByteArray projectFingerprint(const QString &path) {
         auto canonical = QFileInfo(file).canonicalFilePath();
         require(!canonical.isEmpty() && canonical.startsWith(root, Qt::CaseInsensitive),
                 "Project asset is missing or outside the project");
-        require(file.open(QIODevice::ReadOnly) && file.size() <= 512LL * 1024 * 1024,
-                "Cannot fingerprint project asset");
-        require(hash.addData(&file), "Cannot fingerprint project asset");
+        // Projects with larger assets cannot be opened again, so they are not written either.
+        require(file.size() <= 512LL * 1024 * 1024,
+                "Layer image " + name + " exceeds the 512 MiB file limit");
+        require(file.open(QIODevice::ReadOnly) && hash.addData(&file),
+                "Cannot read project asset " + name);
     }
     return hash.result();
+}
+qint64 ProjectMonitor::auditInterval(qint64 hashMilliseconds) {
+    return std::clamp<qint64>(hashMilliseconds * 50, 3000, 120000);
 }
 ProjectMonitor::ProjectMonitor(QObject *parent) : QObject(parent) {
     debounce_.setSingleShot(true);
@@ -132,7 +138,7 @@ void ProjectMonitor::check(bool force) {
     if (path_.isEmpty() || paused_ || loading_)
         return;
     const auto stamp = projectStamp(path_);
-    if (!force && stamp == stamp_ && audit_.isValid() && audit_.elapsed() < 3000)
+    if (!force && stamp == stamp_ && audit_.isValid() && audit_.elapsed() < auditInterval_)
         return;
     stamp_ = stamp;
     audit_.restart();
@@ -141,6 +147,7 @@ void ProjectMonitor::check(bool force) {
         Document document;
         QByteArray digest;
         QString error;
+        qint64 hashMilliseconds = 0;
     };
     const auto path = path_;
     const auto accepted = accepted_;
@@ -160,6 +167,7 @@ void ProjectMonitor::check(bool force) {
             return;
         }
         attempts_ = 0;
+        auditInterval_ = auditInterval(result.hashMilliseconds);
         if (result.digest == accepted_) {
             observed_ = result.digest;
             return;
@@ -176,7 +184,10 @@ void ProjectMonitor::check(bool force) {
     future->setFuture(QtConcurrent::run([path, accepted] {
         Result result;
         try {
+            QElapsedTimer timer;
+            timer.start();
             result.digest = projectFingerprint(path);
+            result.hashMilliseconds = timer.elapsed();
             if (result.digest != accepted) {
                 result.document = loadProject(path);
                 require(result.digest == projectFingerprint(path),
@@ -258,6 +269,10 @@ void RecoveryStore::cleanStaging(const QString &parent) {
         QFileInfo stage(dir.filePath(name));
         // Old incomplete stages can be removed; backup projects are never deleted automatically.
         auto suffix = name.mid(QString(".compositor-stage-").size());
+        // A backup with the same suffix means saving stopped between renaming the project to its
+        // backup and installing the stage, so the stage may hold the only copy of the latest save.
+        if (dir.exists(".compositor-backup-" + suffix))
+            continue;
         if (!stage.isSymLink() && normalizedId(suffix) == suffix &&
             stage.lastModified().secsTo(QDateTime::currentDateTime()) > 86400) {
             QLockFile lock(QDir(stage.filePath()).filePath("stage.lock"));

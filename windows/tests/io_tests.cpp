@@ -355,6 +355,57 @@ class IoTests : public QObject {
         QVERIFY(QFileInfo::exists(recent));
         QVERIFY(QFileInfo::exists(backup));
     }
+    // Saving renames the project to .compositor-backup-X and then installs .compositor-stage-X.
+    // Interrupted between the two, the stage is the latest save and the project is missing.
+    void stagingCleanupKeepsInterruptedReplacement() {
+        QTemporaryDir dir;
+        const auto nonce = newId();
+        const auto stage = dir.filePath(".compositor-stage-" + nonce);
+        const auto backup = dir.filePath(".compositor-backup-" + nonce);
+        const auto abandoned = dir.filePath(".compositor-stage-" + newId());
+        saveProject(photo(Qt::blue), dir.filePath("Latest.comp"));
+        QVERIFY(QDir(dir.path()).rename("Latest.comp", QFileInfo(stage).fileName()));
+        QVERIFY(QDir().mkdir(backup));
+        QVERIFY(QDir().mkdir(abandoned));
+        for (const auto &path : {stage, backup, abandoned}) {
+#ifdef Q_OS_WIN
+            auto native = std::filesystem::path(path.toStdWString());
+#else
+            auto native = std::filesystem::path(path.toStdString());
+#endif
+            std::filesystem::last_write_time(native, std::filesystem::file_time_type::clock::now() -
+                                                         std::chrono::hours(48));
+        }
+        RecoveryStore::cleanStaging(dir.path());
+        QVERIFY(QFileInfo::exists(backup));
+        QVERIFY2(QFileInfo::exists(stage), "The latest save was deleted with its backup still present");
+        QCOMPARE(loadProject(stage).active()->image.pixelColor(0, 0), QColor(Qt::blue));
+        QVERIFY(!QFileInfo::exists(abandoned));
+    }
+    void contentAuditsBackOffForLargeProjects() {
+        QCOMPARE(ProjectMonitor::auditInterval(0), qint64(3000));
+        QCOMPARE(ProjectMonitor::auditInterval(60), qint64(3000));
+        QCOMPARE(ProjectMonitor::auditInterval(400), qint64(20000));
+        QCOMPARE(ProjectMonitor::auditInterval(10000), qint64(120000));
+    }
+    void oversizedAssetsAreNamedWhenSavingFails() {
+        QTemporaryDir dir;
+        auto path = dir.filePath("Large.comp");
+        auto d = photo();
+        saveProject(d, path);
+        const auto asset = QDir(path).filePath("images/" + d.active()->id() + ".png");
+        QFile file(asset);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.resize(512LL * 1024 * 1024 + 1));
+        file.close();
+        try {
+            projectFingerprint(path);
+            QFAIL("An oversized asset was fingerprinted");
+        } catch (const Error &e) {
+            QVERIFY(QString::fromUtf8(e.what()).contains(d.active()->id() + ".png"));
+            QVERIFY(QString::fromUtf8(e.what()).contains("512 MiB"));
+        }
+    }
     void wicUnicodePixelsAlphaAndErrors() {
         QTemporaryDir dir;
         auto path = dir.filePath("日本語图片.png");
@@ -402,6 +453,11 @@ class IoTests : public QObject {
                     auto referenceName = name;
                     referenceName.replace("-src.psd", "-reference.png");
                     QImage reference(dir.filePath(referenceName));
+                    // A reference that is present must be usable; a silent skip hides a mismatch.
+                    if (referenceName != name && QFileInfo::exists(dir.filePath(referenceName)))
+                        QVERIFY2(!reference.isNull() && reference.size() == image.size(),
+                                 qPrintable(name + ": reference image is unreadable or a "
+                                                   "different size"));
                     if (!reference.isNull() && reference.size() == image.size()) {
                         double difference = 0;
                         for (int y = 0; y < image.height(); ++y)

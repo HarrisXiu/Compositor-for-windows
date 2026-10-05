@@ -9,6 +9,7 @@
 - Added a configurable history memory budget that counts shared images once and evicts old commands without changing current content.
 - Added native WIC HEIC/HEIF import with Unicode paths, orientation, profile conversion and missing-codec diagnostics.
 - Added PSD/PSB Bezier masks and six native layer-effect conversions, grayscale import, a fourteenth regression suite and seven pinned real-format fixtures. Advanced Photoshop effects and complete visual parity remain limited; see [IO1–IO5 verification](IO1-IO5_REPORT.md).
+- Acceptance fixes: staging cleanup no longer deletes a stage whose same-suffix backup is still present (a save interrupted between its two renames, where the stage is the latest copy); asset rehashing backs off with hashing time instead of running every three seconds; oversized assets are named in the save error; Photoshop paths are limited to 1,000 shape operations; present but unusable fixture references now fail the real-file check. Rotated HEIC orientation remains a known issue.
 - Kept `.comp` format 11; no saved fields, updater or new release package.
 
 ### 2026-10-04 — Unicode model paths on CI, version remains 0.4.0

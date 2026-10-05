@@ -21,6 +21,9 @@ class ProjectMonitor final : public QObject {
     QByteArray fingerprint() const {
         return accepted_;
     }
+    // The wait between content audits after one took `hashMilliseconds`: every few seconds for
+    // small projects, rarely enough for large ones that hashing stays near 2% of the time.
+    static qint64 auditInterval(qint64 hashMilliseconds);
   signals:
     void projectReady(const compositor::Document &document, const QByteArray &fingerprint);
     void reloadFailed(const QString &message);
@@ -34,6 +37,7 @@ class ProjectMonitor final : public QObject {
     QByteArray accepted_, observed_;
     QByteArray stamp_;
     QElapsedTimer audit_;
+    qint64 auditInterval_ = 3000;
     bool paused_ = false, loading_ = false;
     int attempts_ = 0;
 };

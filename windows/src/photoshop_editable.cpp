@@ -475,6 +475,9 @@ void path(PhotoshopEditable &out, QByteArrayView bytes, QSize canvas) {
     QPainterPath combined;
     combined.setFillRule(Qt::OddEvenFill);
     bool initialFill = false;
+    // Each boolean operation reworks the whole combined path, so a crafted file with very many
+    // of them could stall the import; real shapes use a handful.
+    int operations = 0;
     while (reader.remaining() >= 26) {
         int selector = reader.u16();
         BinaryReader record(reader.bytes(24));
@@ -490,6 +493,8 @@ void path(PhotoshopEditable &out, QByteArrayView bytes, QSize canvas) {
         int fillRule = record.u16();
         require(operation >= -1 && operation <= 3 && count <= reader.remaining() / 26,
                 "Invalid Photoshop vector subpath");
+        require(operation == -1 || ++operations <= 1000,
+                "Photoshop vector path has too many shape operations");
         struct Knot {
             QPointF incoming, anchor, outgoing;
         };

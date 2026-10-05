@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "photoshop.h"
+#include "photoshop_editable.h"
 #include "psd_descriptor_fixture.h"
 #include "psd_fixture.h"
 #include "render.h"
@@ -11,6 +12,27 @@ using namespace compositor;
 class PhotoshopTests : public QObject {
     Q_OBJECT
   private slots:
+    void vectorPathOperationsAreBounded() {
+        PsdFixtureWriter w;
+        w.u32(3);
+        w.u32(0);
+        for (int i = 0; i < 1001; ++i) {
+            w.u16(0);  // Closed subpath of one knot,
+            w.u16(1);
+            w.u16(1);  // united with the path so far.
+            w.u16(1);
+            w.bytes(QByteArray(18, 0));
+            w.u16(2);
+            for (int k = 0; k < 3; ++k) {
+                w.u32(quint32(qint32(.5 * 16777216)));
+                w.u32(quint32(qint32(.5 * 16777216)));
+            }
+        }
+        const QByteArray bytes = w.data;
+        auto editable = photoshopEditable({{"vmsk", QByteArrayView(bytes)}}, {8, 8});
+        QVERIFY(!editable.vectorEnabled);
+        QVERIFY(editable.notes.join(' ').contains("too many shape operations"));
+    }
     void vectorMasksHolesInversionAndDisabled() {
         for (bool psb : {false, true})
             for (int flags : {0, 1, 4}) {

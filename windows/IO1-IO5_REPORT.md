@@ -64,3 +64,21 @@ Arbitrary paths become raster masks/pixels, rather than editable saved Bezier ob
 Gradient/pattern overlay, bevel/emboss and satin are unsupported. Separate Photoshop fill opacity, global-light behavior, complex contours, exact blur semantics and typography can differ. Smart objects retain pixels. Sixteen/32-bit, CMYK/Lab and ZIP-compressed Photoshop channels remain unsupported. **IO5 must not be marked as complete Adobe effect or pixel-parity acceptance while these limits remain.** The visible import conversion report identifies losses for each layer.
 
 References used for the parser: [Adobe Photoshop file format](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/) and [Microsoft WIC HEIF codec](https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec).
+
+## Acceptance follow-up — 2026-10-05
+
+Independent acceptance rebuilt `c49e249` in a separate worktree: 14 suites, 409 passes, 0 failures, 21 opt-in skips. The 13 pinned fixtures matched their SHA256 values, and the real-file run reproduced every reported figure (vector MAE 0 / 0.13975 / 0.42698 / 0.32866, effects 8.59961, PSB and HEIC passes). Fixes made on `io1-io5-fixes`:
+
+| Finding | Change |
+| --- | --- |
+| Staging cleanup could delete the latest save. Saving unlocks the stage before renaming the project to `.compositor-backup-X` and the stage into place; interrupted between the renames, the stage is the only copy of the latest save, and cleanup removed it after 24 hours. | A stage is kept whenever a backup with the same suffix exists. Regression: `stagingCleanupKeepsInterruptedReplacement` (fails without the fix). |
+| The monitor rehashed every asset every three seconds, even when nothing changed. | The content audit interval is 50 times the last hashing time, between 3 seconds and 2 minutes: unchanged for small projects, about 2% of the time for large ones. Size/time changes are still noticed within a second. |
+| "Cannot fingerprint project asset" did not say why a save failed. | Oversized assets are named with the 512 MiB limit, which matches the existing load limit. |
+| Photoshop path boolean operations were unbounded. | At most 1,000 shape operations per path; beyond that the vector mask is skipped with a conversion note. |
+| The real-file check silently skipped a reference of the wrong size. | A present reference must load and match the render size. |
+
+After the fixes: 14 suites, **413 passes, 0 failures, 21 opt-in skips** (IO 20 + 1 skip, Photoshop 25); the real-file run passes with the stricter reference check.
+
+### Known issue, deferred
+
+Rotated HEIC orientation is unverified. iPhone photos usually carry an `irot` rotation in the HEIF container as well as an EXIF orientation. If the Windows HEIF decoder already applies `irot`, the EXIF rotation applied afterwards turns such photos a second time; if it does not, the EXIF path may not be found. The pinned `example.heic` is not rotated. Verify with portrait iPhone photos (EXIF 6 and 8) before relying on HEIC orientation.
