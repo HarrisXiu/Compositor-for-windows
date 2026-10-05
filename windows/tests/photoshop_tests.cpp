@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT
+#include "editable_layers.h"
 #include "photoshop.h"
+#include "text_fonts.h"
+#include <QFontMetricsF>
 #include "psd_descriptor_fixture.h"
 #include "psd_fixture.h"
 #include "render.h"
+#include <QElapsedTimer>
 #include <QFile>
+#include <QFontDatabase>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -171,6 +176,103 @@ class PhotoshopTests : public QObject {
         auto path = dir.filePath("Text.comp");
         saveProject(result.document, path);
         QCOMPARE(loadProject(path).manifest(), result.document.manifest());
+    }
+    void textRunsKeepTheirFontsAndColors() {
+        PsdFixtureLayer l;
+        l.extra["TySh"] = styledTypeFixture();
+        auto result = readPhotoshop(psdFixture({l}, false, {256, 256}));
+        const auto text = result.document.layers[0].metadata.value("text").toObject();
+        QCOMPARE(text.value("fontName").toString(), QString("SegoeUI"));
+        const auto fonts = text.value("fontRuns").toArray();
+        QCOMPARE(fonts.size(), 1);
+        QCOMPARE(fonts[0].toObject().value("location").toInt(), 6);
+        QCOMPARE(fonts[0].toObject().value("length").toInt(), 5); // Photoshop's closing return is not text.
+        QCOMPARE(fonts[0].toObject().value("fontName").toString(), QString("Arial-BoldMT"));
+        const auto colors = text.value("colorRuns").toArray();
+        QCOMPARE(colors.size(), 1);
+        QCOMPARE(colors[0].toObject().value("red").toDouble(), 1.0);
+        QVERIFY(!result.conversions.join("\n").contains("Only the first text style"));
+        // The PostScript names resolve to the installed families: no substitution reported.
+        if (QFontDatabase::families().contains("Segoe UI") && QFontDatabase::families().contains("Arial"))
+            QVERIFY(!result.conversions.join("\n").contains("not installed"));
+    }
+    void paragraphTextsFirstBaselineSitsWherePhotoshopPutsIt() {
+        PsdFixtureLayer l;
+        l.extra["TySh"] = styledTypeFixture();
+        auto result = readPhotoshop(psdFixture({l}, false, {256, 256}));
+        const auto &layer = result.document.layers[0];
+        const auto text = layer.metadata.value("text").toObject();
+        QFont font(resolvedTextFont(text.value("fontName").toString()));
+        font.setPixelSize(20);
+        // The frame's top is at y = 20, so its first baseline is one ascent below that, although
+        // 40-pixel lines would otherwise put it lower.
+        const double origin = layer.transform().value("origin").toArray()[1].toDouble();
+        QVERIFY(std::abs(origin + textFirstBaseline(text) - (20 + QFontMetricsF(font).ascent())) < .5);
+        QVERIFY(textFirstBaseline(text) > 12 + QFontMetricsF(font).ascent() + 5);
+    }
+    void postScriptFontNamesResolveToInstalledFamilies() {
+        const auto families = QFontDatabase::families();
+        if (!families.contains("Arial") || !families.contains("Times New Roman") ||
+            !families.contains("Segoe UI"))
+            QSKIP("Needs the Windows fonts (run with the native platform plugin)");
+        QCOMPARE(resolvedTextFont("Arial-BoldMT"), QString("Arial"));
+        QCOMPARE(resolvedTextFont("Arial-ItalicMT"), QString("Arial"));
+        QCOMPARE(resolvedTextFont("TimesNewRomanPSMT"), QString("Times New Roman"));
+        QCOMPARE(resolvedTextFont("SegoeUI"), QString("Segoe UI"));
+        QCOMPARE(resolvedTextFont("segoe-ui"), QString("Segoe UI"));
+        QVERIFY(installedTextFont("NoSuchFontAnywhereMT").isEmpty());
+        QCOMPARE(resolvedTextFont("NoSuchFontAnywhereMT"), QString("Segoe UI"));
+    }
+    void vectorFillLayerKeepsItsPixelMaskInPlace() {
+        // No raster channels, a pixel mask hiding column 1 of the canvas, and a vector fill over
+        // columns 1-6: the drawn path gets its own grid, the mask stays on the canvas's.
+        PsdFixtureLayer l;
+        l.bounds = {};
+        l.planes.clear();
+        l.hasMask = true;
+        l.maskBounds = {0, 0, 8, 8};
+        QByteArray mask(64, char(255));
+        for (int y = 0; y < 8; ++y)
+            mask[y * 8 + 1] = 0;
+        l.planes.emplace_back(-2, mask);
+        l.extra["vmsk"] = vectorMaskFixture();
+        l.extra["SoCo"] =
+            psdDescriptor("null", {{"Clr ", psdObject("RGBC", {{"Rd  ", psdDouble(10)},
+                                                               {"Grn ", psdDouble(100)},
+                                                               {"Bl  ", psdDouble(240)}})}});
+        auto image = renderDocument(readPhotoshop(psdFixture({l})).document);
+        QCOMPARE(image.pixelColor(1, 4).alpha(), 0);   // The masked column.
+        QVERIFY(image.pixelColor(2, 4).blue() > 200);  // Filled and not masked.
+        QVERIFY(image.pixelColor(6, 4).blue() > 200);
+        QCOMPARE(image.pixelColor(4, 0).alpha(), 0);   // Outside the path.
+    }
+    void tooComplexVectorPathsAreReportedNotHung() {
+        PsdFixtureWriter w;
+        w.u32(3);
+        w.u32(0);
+        for (int i = 0; i < 2100; ++i) {
+            w.u16(0);
+            w.u16(1);
+            w.u16(1);
+            w.u16(1);
+            w.bytes(QByteArray(18, 0));
+            w.u16(2);
+            for (int k = 0; k < 6; ++k)
+                w.u32(quint32(k * 1000));
+        }
+        PsdFixtureLayer l;
+        l.bounds = {0, 0, 8, 8};
+        l.planes = {{-1, QByteArray(64, char(255))},
+                    {0, QByteArray(64, char(255))},
+                    {1, QByteArray(64, 0)},
+                    {2, QByteArray(64, 0)}};
+        l.extra["vmsk"] = w.data;
+        QElapsedTimer clock;
+        clock.start();
+        auto result = readPhotoshop(psdFixture({l}));
+        QVERIFY(clock.elapsed() < 10000);
+        QVERIFY(result.conversions.join("\n").contains("too complex"));
+        QCOMPARE(renderDocument(result.document).pixelColor(4, 4).alpha(), 255);
     }
     void unsupportedTypeRasterFallback() {
         for (auto payload : {typeFixture(true), typeFixture(false, .5), QByteArray(10, 0)}) {

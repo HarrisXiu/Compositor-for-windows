@@ -17,8 +17,11 @@ namespace compositor {
 static QByteArray projectStamp(const QString &path) {
     QByteArray stamp;
     auto append = [&](const QFileInfo &file) {
+        // A replaced file gets a new creation time even when its size and modification time are
+        // copied over, so metadata alone notices nearly every change.
         stamp += file.fileName().toUtf8() + ':' + QByteArray::number(file.size()) + ':' +
-                 QByteArray::number(file.lastModified().toMSecsSinceEpoch()) + ';';
+                 QByteArray::number(file.lastModified().toMSecsSinceEpoch()) + ':' +
+                 QByteArray::number(file.birthTime().toMSecsSinceEpoch()) + ';';
     };
     append(QFileInfo(QDir(path).filePath("manifest.json")));
     for (const auto &file : QDir(QDir(path).filePath("images")).entryInfoList(QDir::Files))
@@ -39,25 +42,30 @@ QByteArray projectFingerprint(const QString &path) {
         auto layer = v.toObject();
         for (auto key : {"imageFile", "maskFile"}) {
             auto name = layer.value(QLatin1String(key)).toString();
-            if (!name.isEmpty()) {
-                require(QFileInfo(name).fileName() == name && !name.contains('\\'),
-                        "Invalid project asset name");
+            if (!name.isEmpty())
                 names << name;
-            }
         }
     }
     names.removeDuplicates();
     names.sort();
+    // A damaged project still has a fingerprint: what is wrong with it is part of the state, so
+    // saving over it can be offered as replacing changes on disk rather than failing.
     const auto root = QFileInfo(path).canonicalFilePath() + '/';
     for (const auto &name : names) {
         hash.addData(name.toUtf8());
+        if (QFileInfo(name).fileName() != name || name.contains('\\')) {
+            hash.addData("|invalid name|");
+            continue;
+        }
         QFile file(QDir(path).filePath("images/" + name));
         auto canonical = QFileInfo(file).canonicalFilePath();
-        require(!canonical.isEmpty() && canonical.startsWith(root, Qt::CaseInsensitive),
-                "Project asset is missing or outside the project");
-        require(file.open(QIODevice::ReadOnly) && file.size() <= 512LL * 1024 * 1024,
-                "Cannot fingerprint project asset");
-        require(hash.addData(&file), "Cannot fingerprint project asset");
+        if (canonical.isEmpty() || !canonical.startsWith(root, Qt::CaseInsensitive)) {
+            hash.addData("|missing|");
+            continue;
+        }
+        if (!file.open(QIODevice::ReadOnly) || file.size() > 512LL * 1024 * 1024 ||
+            !hash.addData(&file))
+            hash.addData("|unreadable|");
     }
     return hash.result();
 }
@@ -79,27 +87,33 @@ ProjectMonitor::ProjectMonitor(QObject *parent) : QObject(parent) {
 }
 void ProjectMonitor::setPath(const QString &path, const QByteArray &savedFingerprint) {
     path_ = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
-    acknowledge();
     if (!savedFingerprint.isEmpty()) {
+        // Just saved: the fingerprint of what was written is known, nothing needs hashing.
         accepted_ = savedFingerprint;
         observed_ = accepted_;
+        baseline_ = false;
+        stamp_ = projectStamp(path_);
+        audit_.start();
+        watch();
         debounce_.start();
-    }
+    } else
+        acknowledge();
     if (path_.isEmpty())
         poll_.stop();
     else
         poll_.start();
 }
 void ProjectMonitor::acknowledge() {
-    try {
-        accepted_ = path_.isEmpty() ? QByteArray() : projectFingerprint(path_);
-    } catch (const Error &) {
-        accepted_.clear();
-    }
-    observed_ = accepted_;
+    // The project as it is now becomes the accepted state. Its fingerprint is worked out in the
+    // background; if the folder changes meanwhile, that change is reported like any other.
+    accepted_.clear();
+    observed_.clear();
+    baseline_ = !path_.isEmpty();
     stamp_ = projectStamp(path_);
     audit_.start();
     watch();
+    if (baseline_)
+        check(true);
 }
 void ProjectMonitor::setPaused(bool paused) {
     paused_ = paused;
@@ -132,7 +146,7 @@ void ProjectMonitor::check(bool force) {
     if (path_.isEmpty() || paused_ || loading_)
         return;
     const auto stamp = projectStamp(path_);
-    if (!force && stamp == stamp_ && audit_.isValid() && audit_.elapsed() < 3000)
+    if (!force && stamp == stamp_ && audit_.isValid() && audit_.elapsed() < AuditInterval)
         return;
     stamp_ = stamp;
     audit_.restart();
@@ -144,14 +158,30 @@ void ProjectMonitor::check(bool force) {
     };
     const auto path = path_;
     const auto accepted = accepted_;
+    const bool baseline = baseline_;
     auto future = new QFutureWatcher<Result>(this);
-    connect(future, &QFutureWatcher<Result>::finished, this, [this, future, path] {
+    connect(future, &QFutureWatcher<Result>::finished, this, [this, future, path, baseline, stamp] {
         auto result = future->result();
         future->deleteLater();
         loading_ = false;
         if (path != path_ || paused_)
             return;
         watch();
+        // A new baseline was asked for while an older check ran; that check is out of date.
+        if (baseline_ && !baseline) {
+            check(true);
+            return;
+        }
+        if (baseline && baseline_) {
+            baseline_ = false;
+            // Unchanged while it was hashed: this is the state that was opened.
+            if (result.error.isEmpty() && projectStamp(path_) == stamp) {
+                accepted_ = observed_ = result.digest;
+                return;
+            }
+            debounce_.start();
+            return;
+        }
         if (!result.error.isEmpty()) {
             if (++attempts_ <= 8)
                 debounce_.start();
@@ -173,11 +203,11 @@ void ProjectMonitor::check(bool force) {
         accepted_ = result.digest;
         emit projectReady(result.document, result.digest);
     });
-    future->setFuture(QtConcurrent::run([path, accepted] {
+    future->setFuture(QtConcurrent::run([path, accepted, baseline] {
         Result result;
         try {
             result.digest = projectFingerprint(path);
-            if (result.digest != accepted) {
+            if (!baseline && result.digest != accepted) {
                 result.document = loadProject(path);
                 require(result.digest == projectFingerprint(path),
                         "Project is still being written");
@@ -273,9 +303,11 @@ QStringList recentFiles() {
     return QSettings().value("files/recent").toStringList();
 }
 void rememberFile(const QString &path) {
-    auto absolute = QFileInfo(path).absoluteFilePath();
+    auto absolute = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     auto files = recentFiles();
-    files.removeAll(absolute);
+    files.removeIf([&](const QString &file) {
+        return QDir::cleanPath(file).compare(absolute, Qt::CaseInsensitive) == 0;
+    });
     files.prepend(absolute);
     while (files.size() > 20)
         files.removeLast();

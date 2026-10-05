@@ -34,7 +34,9 @@ class ProjectMonitor final : public QObject {
     QByteArray accepted_, observed_;
     QByteArray stamp_;
     QElapsedTimer audit_;
-    bool paused_ = false, loading_ = false;
+    bool paused_ = false, loading_ = false, baseline_ = false;
+    // How often unchanged metadata is double-checked by hashing the contents.
+    static constexpr int AuditInterval = 60000;
     int attempts_ = 0;
 };
 

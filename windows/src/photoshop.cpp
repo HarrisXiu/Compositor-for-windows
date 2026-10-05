@@ -5,6 +5,7 @@
 #include "editable_layers.h"
 #include "filters.h"
 #include "photoshop_editable.h"
+#include "text_fonts.h"
 #include <QColorSpace>
 #include <QFile>
 #include <QFontInfo>
@@ -501,19 +502,28 @@ void assemble(PhotoshopImport &import, std::vector<RawLayer> &raw, qint64 budget
                     l.image = renderText(editable.text);
                     l.image.setColorSpace(QColorSpace::SRgb);
                     l.metadata["imageFile"] = id + ".png";
-                    QFont font(editable.text.value("fontName").toString());
+                    const auto requested = editable.text.value("fontName").toString();
+                    QFont font(resolvedTextFont(requested));
                     font.setPixelSize(int(std::lround(editable.text.value("fontSize").toDouble())));
                     QFontMetricsF metrics(font);
-                    auto family = QFontInfo(font).family();
-                    if (family != editable.text.value("fontName").toString())
-                        note("Font substituted with " + family + "; text appearance may differ.");
+                    if (installedTextFont(requested).isEmpty())
+                        note("Font " + requested + " is not installed; substituted with " +
+                             font.family() + ". Text appearance may differ.");
+                    for (const auto &value : editable.text.value("fontRuns").toArray())
+                        if (const auto run = value.toObject().value("fontName").toString();
+                            installedTextFont(run).isEmpty())
+                            note("Font " + run + " is not installed; text appearance may differ.");
                     QString alignment = editable.text.value("alignment").toString();
+                    // Photoshop puts the first baseline at the font's ascent below a paragraph
+                    // frame's top, and point text's anchor on it; the layer is placed so that ours
+                    // lands there too, whatever the line height does to it.
+                    const double baseline = textFirstBaseline(editable.text);
                     QPointF anchor = editable.textFrame
-                                         ? QPointF(12, 12)
+                                         ? QPointF(12, baseline - metrics.ascent())
                                          : QPointF(alignment == "Center"  ? l.image.width() / 2.0
                                                    : alignment == "Right" ? l.image.width() - 12.0
                                                                           : 12.0,
-                                                   12 + metrics.ascent());
+                                                   baseline);
                     auto local = anchor - QPointF(l.image.width() / 2.0, l.image.height() / 2.0);
                     if (editable.textFlipY)
                         local.setY(-local.y());
@@ -581,6 +591,10 @@ void assemble(PhotoshopImport &import, std::vector<RawLayer> &raw, qint64 budget
                             bounds.height() <= MaxSide &&
                             bounds.width() * bounds.height() <= budget - colors,
                         "Photoshop vector exceeds memory budget");
+                // A pixel mask was laid out over the canvas, where this layer was placed until now;
+                // it stays there while the drawn path gets a grid of its own.
+                if (!l.mask.isNull() && !l.metadata.value("maskPlacement").isObject())
+                    l.metadata["maskPlacement"] = l.metadata.value("transform");
                 l.image = QImage(bounds.size().toSize(), QImage::Format_RGBA8888_Premultiplied);
                 require(!l.image.isNull(), "Not enough memory for Photoshop vector");
                 l.image.fill(Qt::transparent);

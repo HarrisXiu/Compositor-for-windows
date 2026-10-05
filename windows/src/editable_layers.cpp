@@ -8,6 +8,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextFragment>
+#include <QTextLayout>
 #include <algorithm>
 #include <cmath>
 namespace compositor {
@@ -142,6 +143,17 @@ QImage renderText(const QJsonObject &style) {
     QPainter p(&image);
     document.drawContents(&p);
     return image;
+}
+double textFirstBaseline(const QJsonObject &style) {
+    QTextDocument document;
+    loadTextDocument(document, style);
+    document.size(); // Lays the text out.
+    const auto block = document.firstBlock();
+    const auto *layout = block.layout();
+    if (!layout || layout->lineCount() == 0)
+        return document.documentMargin() + QFontMetricsF(document.defaultFont()).ascent();
+    const auto line = layout->lineAt(0);
+    return layout->position().y() + line.y() + line.ascent();
 }
 QImage renderShape(const QJsonObject &style, QSize size) {
     require(size.width() > 0 && size.height() > 0 && size.width() <= MaxSide &&

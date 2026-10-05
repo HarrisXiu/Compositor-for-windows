@@ -64,3 +64,21 @@ Arbitrary paths become raster masks/pixels, rather than editable saved Bezier ob
 Gradient/pattern overlay, bevel/emboss and satin are unsupported. Separate Photoshop fill opacity, global-light behavior, complex contours, exact blur semantics and typography can differ. Smart objects retain pixels. Sixteen/32-bit, CMYK/Lab and ZIP-compressed Photoshop channels remain unsupported. **IO5 must not be marked as complete Adobe effect or pixel-parity acceptance while these limits remain.** The visible import conversion report identifies losses for each layer.
 
 References used for the parser: [Adobe Photoshop file format](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/) and [Microsoft WIC HEIF codec](https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec).
+
+## Acceptance fixes — 2026-10-05
+
+Branch `fix/io-acceptance`, on top of `c49e249`. Acceptance found these defects; each now has a regression test.
+
+| Area | Defect | Fix and measurement |
+| --- | --- | --- |
+| IO3 | Every command push serialized both document snapshots of all 40 commands to estimate memory: about 110 ms per edit on a 400-layer document, selection changes included. | Each command's footprint is measured once with a metadata estimate; the shared-image union runs only when an upper bound exceeds the budget. 60 edits: 6.5 s → 0.54 s. An edit that alone exceeds the budget keeps one undo step. |
+| IO1 | Opening hashed the whole project on the UI thread; Save hashed it before starting and again afterwards; idle projects were rehashed every 3 s (about 22% of a core on 157 MiB). | Baseline hashing runs in the background and changes made meanwhile are reported normally; the save job checks for external changes itself and reuses the saved fingerprint; contents are audited every 60 s and metadata now includes creation times. 157 MiB: open 1.9 s → 1.2 s (load only), Save's longest UI stall about 2 s → 44 ms. |
+| IO1 | A project damaged on disk (a referenced image deleted) made Ctrl+S fail with "Project asset is missing". | Missing, invalid and unreadable assets contribute markers to the fingerprint, so the damage is reported as an external change and Save can replace it after confirmation. |
+| IO1/IO2 | Opening a project by a path differing only in letter case created a second tab watching and saving the same folder; recent files kept both spellings. | Project paths and recent files compare case-insensitively. |
+| IO5 | A vector fill/stroke layer without raster data but with a pixel mask: the mask laid out on the canvas was stretched over the new path-sized grid. | The mask keeps its canvas placement. |
+| IO5 | Boolean operations of a vector path had no limit. | More than 2000 operations is reported and the vector skipped. |
+| IO5 (real file) | In the user's 5400×7200 poster PSD, the "get" text lost its last letter: the PostScript name `BodoniMT` was not matched to the installed `Bodoni MT` and Tahoma wrapped out of the frame. A line mixing two fonts kept only the first. Paragraph text with explicit leading sat 15 px low on every line (Qt places a fixed-height line's baseline at 0.8× the line height; Photoshop at the font's ascent). | PostScript names resolve to installed families; style runs become native font/color runs (only the size stays single); the layer is placed by the first baseline actually laid out. Against Photoshop's own composite: MAE 2.62 → 0.15, differing pixels 1.96% → 0.12%, every text line 0 px offset. |
+
+HEIC orientation was checked with WIC-encoded files carrying a HEIF rotation: WIC returns rotated pixels and orientation 1, so EXIF orientation is not applied twice. A rotated iPhone sample remains untested.
+
+The pinned fixture results are unchanged for the vector and effects files. The delivered `psb-test` render in `artifacts/io1-io5` does not match what `c49e249` itself renders (MAE 11, rebuilt and rerun natively); the fixes change only its text region (0.12% of pixels).

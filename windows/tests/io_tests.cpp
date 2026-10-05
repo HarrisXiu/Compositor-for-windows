@@ -4,6 +4,8 @@
 #include "project_io.h"
 #include "render.h"
 #include "wic_import.h"
+#include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -15,6 +17,7 @@
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 #include <QtTest>
 #include <chrono>
 #include <cstdio>
@@ -318,6 +321,78 @@ class IoTests : public QObject {
         p.canvas->selectAll();
         QVERIFY(p.history.memoryUsage() >= p.session.selection.sizeInBytes());
         QVERIFY(!p.isModified());
+    }
+    void aDamagedProjectOnDiskCanBeReplacedBySaving() {
+        QTemporaryDir dir;
+        auto path = dir.filePath("Damaged.comp");
+        auto d = photo();
+        saveProject(d, path);
+        const auto intact = projectFingerprint(path);
+        auto window = makeWindow();
+        window->openPath(path);
+        auto p = current(*window);
+        // The baseline is worked out in the background, not while opening.
+        QTRY_COMPARE_WITH_TIMEOUT(p->monitor->fingerprint(), intact, 8000);
+        p->edit("Paint", [](Document &doc) { doc.active()->image.fill(Qt::blue); });
+        QVERIFY(QFile::remove(QDir(path).filePath("images/" + d.active()->metadata["imageFile"].toString())));
+        // A missing asset is part of the fingerprint instead of an error.
+        QVERIFY(projectFingerprint(path) != intact);
+        QStringList asked;
+        int answer = QMessageBox::No;
+        QTimer boxes;
+        connect(&boxes, &QTimer::timeout, [&] {
+            if (auto box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                asked << box->text();
+                // The button itself: QMessageBox::warning reports the button clicked.
+                if (auto button = box->button(QMessageBox::StandardButton(answer)))
+                    button->click();
+                else
+                    box->reject();
+            }
+        });
+        boxes.start(30);
+        QAction *save = nullptr;
+        for (auto a : window->findChildren<QAction *>())
+            if (a->property("layerAction").toString() == "Save Project")
+                save = a;
+        save->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!asked.isEmpty() && !p->saving, 8000);
+        QVERIFY(asked.first().contains("replace", Qt::CaseInsensitive));
+        QVERIFY(p->isModified()); // Declined: nothing written.
+        QVERIFY_EXCEPTION_THROWN(loadProject(path), Error);
+        answer = QMessageBox::Yes;
+        asked.clear();
+        save->trigger();
+        QTRY_VERIFY_WITH_TIMEOUT(!p->isModified(), 8000);
+        QCOMPARE(loadProject(path).active()->image.pixelColor(0, 0), QColor(Qt::blue));
+    }
+    void theSameProjectByAnotherLetterCaseReusesItsTab() {
+        QTemporaryDir dir;
+        auto path = dir.filePath("Case.comp");
+        saveProject(photo(), path);
+        auto window = makeWindow();
+        auto tabs = window->findChild<QTabWidget *>();
+        window->openPath(path);
+        const int count = tabs->count();
+        window->openPath(path.toUpper());
+        window->openPath(QDir::toNativeSeparators(path.toLower()));
+        QCOMPARE(tabs->count(), count);
+        rememberFile(path);
+        rememberFile(path.toUpper());
+        QCOMPARE(recentFiles().filter("case.comp", Qt::CaseInsensitive).size(), 1);
+    }
+    void anEditLargerThanTheBudgetCanStillBeUndone() {
+        EditorPage p(photo());
+        p.history.setMemoryBudget(100);
+        const auto before = p.document.active()->image;
+        p.edit("Paint", [](Document &d) { d.active()->image.fill(Qt::blue); });
+        QCOMPARE(p.history.count(), 1);
+        p.history.undo();
+        QCOMPARE(p.document.active()->image, before);
+        p.history.redo();
+        p.edit("Paint again", [](Document &d) { d.active()->image.fill(Qt::green); });
+        QCOMPARE(p.history.count(), 1); // Only the newest is kept.
+        QCOMPARE(p.history.undoText(), QString("Paint again"));
     }
     void recentFilesAreUniqueAndBounded() {
         QSettings().remove("files/recent");
