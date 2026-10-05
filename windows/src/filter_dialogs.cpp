@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "editor.h"
+#include "adjustment_dialogs.h"
 #include "camera_raw.h"
 #include "curve_editor.h"
 #include "demo.h"
@@ -193,6 +194,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         // The edit shows on the canvas itself while the dialog stays open; the small preview in the
         // dialog remains only for what the canvas cannot show (Camera Raw).
         std::unique_ptr<FilterPreview> live;
+        // Levels, Curves and Hue/Saturation's own panels (histograms, handles, eyedroppers).
+        std::unique_ptr<AdjustmentDialog> tools;
         if (FilterPreview::supported(kind)) {
             live = std::make_unique<FilterPreview>(p, kind, asAdjustment, editExisting);
             preview->hide();
@@ -200,6 +203,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                     [this](const QString &message) { statusBar()->showMessage(uiText(message), 5000); });
         }
         auto updatePreview = [&] {
+            if (tools)
+                refreshAdjustmentTools(*tools, kind);
             if (live) {
                 live->update(settings);
                 return;
@@ -278,6 +283,9 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         debounce.setSingleShot(true);
         connect(&debounce, &QTimer::timeout, &dialog, updatePreview);
         QHash<QString, QDoubleSpinBox *> controls;
+        QHash<QString, ParameterControl *> parameters;
+        CurveEditor *curveWidget = nullptr;
+        QComboBox *curveChannels = nullptr;
         QComboBox *rangeControl = nullptr;
         std::function<void()> storeRange = [] {};
         if (kind == "Hue/Saturation" || kind == "Levels") {
@@ -346,6 +354,7 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             addParameter(form, label, parameter, key + "Control");
             auto spin = parameter->spin();
             controls[key] = spin;
+            parameters[key] = parameter;
             settings[key] = initial;
             connect(spin, &QDoubleSpinBox::valueChanged, &dialog, [&, key](double v) {
                 settings[key] = v;
@@ -852,6 +861,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                 curve->points = settings.value("channels").toArray()[i].toArray();
                 curve->update();
             });
+            curveWidget = curve;
+            curveChannels = channels;
         } else if (kind == "Levels") {
             value("inputBlack", "Input black", 0, 0, 254, 0);
             value("inputWhite", "Input white", 255, 1, 255, 0);
@@ -896,10 +907,11 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             }
             check("reversed", "Reverse", false);
         }
+        // Puts the selected range's (or channel's) values into the fields.
+        std::function<void()> loadRange = [] {};
         if (rangeControl) {
             storeRange();
-            connect(rangeControl, &QComboBox::currentTextChanged, &dialog,
-                    [&, rangeControl](const QString &) {
+            loadRange = [&, rangeControl] {
                         auto range = comboValue(rangeControl);
                         QJsonObject current;
                         if (kind == "Hue/Saturation") {
@@ -924,7 +936,20 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                             settings[it.key()] = v;
                         }
                         debounce.start(100);
-                    });
+                    };
+            connect(rangeControl, &QComboBox::currentTextChanged, &dialog,
+                    [&](const QString &) { loadRange(); });
+        }
+        if (kind == "Levels" || kind == "Curves" || kind == "Hue/Saturation") {
+            tools = std::make_unique<AdjustmentDialog>(AdjustmentDialog{
+                dialog, layout, form, settings, controls, parameters, rangeControl, loadRange,
+                [&] { debounce.start(100); }, p, asAdjustment, editExisting, targetId});
+            if (kind == "Levels")
+                addLevelsTools(*tools);
+            else if (kind == "Curves")
+                addCurvesTools(*tools, curveWidget, curveChannels);
+            else
+                addHueSaturationTools(*tools);
         }
         if (live) {
             auto previewToggle = new QCheckBox("Preview");

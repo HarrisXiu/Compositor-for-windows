@@ -2,6 +2,7 @@
 #pragma once
 #include <QJsonArray>
 #include <QWidget>
+#include <array>
 #include <functional>
 namespace compositor {
 class CurveEditor : public QWidget {
@@ -9,6 +10,16 @@ class CurveEditor : public QWidget {
     explicit CurveEditor(QWidget *parent = nullptr);
     QJsonArray points;
     std::function<void(const QJsonArray &)> changed;
+    // Drawn behind the curve when set: the channel's histogram of the original pixels.
+    std::array<double, 256> histogram{};
+    bool showHistogram = false;
+    QColor histogramColor = QColor(120, 120, 120);
+    // The point last clicked or dragged, -1 for none; reported as it changes.
+    int selected = -1;
+    std::function<void(int)> selectionChanged;
+    // Removes the selected point unless it is an end point.
+    void removeSelected();
+    void resetCurve();
 
   protected:
     void paintEvent(QPaintEvent *) override;
