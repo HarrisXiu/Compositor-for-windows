@@ -77,7 +77,7 @@ try {
     }
     $taskResults.Add([pscustomobject]@{ name = 'bundle-integrity'; status = 'passed'; exit_code = 0 })
     $null = Invoke-AiCheck 'runtime-https' $taskProbe @('--runtime-check')
-    foreach ($taskSuite in @('model','ai','core','ui','photoshop','raw','dither','layer','canvas','transform','text_shape','ai_selection','ai_background','io')) {
+    foreach ($taskSuite in @('model','ai','core','ui','photoshop','raw','dither','layer','canvas','transform','text_shape','ai_selection','ai_background','io','selection_transform','live_preview','adjustment_panel','filter_reach')) {
         $taskName = if ($taskSuite -eq 'core') { 'compositor_tests.exe' } else { "compositor_$($taskSuite)_tests.exe" }
         if ($taskSuite -eq 'model') { $env:QT_QPA_PLATFORM = 'windows' }
         $taskQtLog = (Join-Path $taskRun ("tests-" + $taskSuite + '-qtest.txt')) + ',txt'

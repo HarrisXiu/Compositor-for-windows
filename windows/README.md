@@ -2,7 +2,7 @@
 
 **当前 Windows 版尚未完全完成，后续将持续更新。** This is Windows migration preview 0.4, built with C++20 and Qt 6 Widgets. Eight original C pixel-processing source files are compiled directly from `Compositor/Rendering`; the original Dither kernel is ported to C++ with Windows parallel execution. There is no Rust code or runtime dependency on Python. The original macOS project is retained. Application and port source remain under the root MIT license; third-party libraries retain their own licenses.
 
-移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架、L1–L4、C1–C5、T1/T2、S1/S3、P1–P3、X1/X2 和 AI1–AI3 的当前范围已完成，R2–R4 已整合；浮动选区与选区变换（S2）、网格扭曲、大文档与跨平台验收继续完善。概括计划见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)，整合验证见 [AI1 整合报告](AI1_INTEGRATION_REPORT.md)。版本保持 0.4.0，自动更新继续排除。
+移植按基础能力、渲染性能、功能与交互完善、兼容性及发布验收四个阶段推进。基础框架、L1–L4、C1–C5、T1/T2、S1–S3、P1–P3、X1/X2、F1–F4、IO1–IO4 和 AI1–AI3 的当前范围已完成，R2–R4 已整合，IO5 部分完成。界面外观（U1）、安装包与系统集成（D1/D2）、网格扭曲、Mac 参考对照、大文档与跨平台验收尚未完成。概括计划见 [主 README](../README.md#移植计划与当前进度)，详细状态见 [移植进度](PORTING_STATUS.md)，最新进展与剩余工作见 [2026-10-05 工作报告](WORK_REPORT_2026-10-05.md)。版本保持 0.4.0，自动更新继续排除。
 
 ## Run
 
@@ -22,7 +22,7 @@ From PowerShell at the repository root:
 .\windows\build.ps1 -QtRoot C:\Qt\6.10.2\msvc2022_64 -Package
 ```
 
-The script fetches the SHA256-pinned LibRaw 0.22.2, ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 SDKs once, configures CMake, compiles C/C++, runs fourteen test suites, deploys the Qt/LibRaw/AI DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip` when `-Package` is supplied. Omit `-Package` for a build and test run only. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
+The script fetches the SHA256-pinned LibRaw 0.22.2, ONNX Runtime DirectML 1.24.4 and DirectML 1.15.4 SDKs once, configures CMake, compiles C/C++, runs eighteen test suites, deploys the Qt/LibRaw/AI DLLs and plugins, and creates `artifacts/Compositor-Windows-x64.zip` when `-Package` is supplied. Omit `-Package` for a build and test run only. Packaging also fetches the SHA256-pinned Qt 6.10.2 source archives once (`windows/fetch-qt-source.ps1`, about 55 MB), copies their license texts into the package, and leaves the archives with `SHA256SUMS.txt` in `artifacts/qt-source/`.
 
 When publishing a release, attach everything in `artifacts/qt-source/` beside the ZIP: Qt is LGPLv3, so its source must be available wherever the binaries are. On a tag, CI uploads them as the `Qt-6.10.2-source` artifact. If Qt is already in the local `.cache/Qt` directory, `-QtRoot` is optional. Subsequent builds can use the cached SDK offline. For direct CMake builds, set `COMPOSITOR_LIBRAW_ROOT` to the extracted SDK directory. Use an x64 Visual Studio CMake generator; projects configured with Ninja require a separate developer-shell configuration.
 
@@ -34,7 +34,39 @@ Recovery snapshots run in the background every 60 seconds without marking the or
 
 Use **File > File and History Preferences…** to adjust the recovery interval (0 disables it) and the undo budget (default 512 MiB per project). Shared pixel buffers count once; the oldest undo entries are evicted without changing the current document. The budget covers retained history, rather than total application memory; the existing 40-command cap also applies.
 
-HEIC/HEIF import uses native Windows WIC. Install the Windows HEIF/HEVC extensions when the decoder reports that they are missing. **Known issue, to be fixed later:** orientation of rotated HEIC photos (for example portrait iPhone shots) has not been verified; such photos may import rotated twice or not at all. PSD/PSB import now reads Bezier vector masks and converts six native layer-effect types. Seven pinned real-format fixtures and vector reference checks are available through `windows/fetch-io-fixtures.ps1`; see [implementation, tests and Photoshop compatibility limits](IO1-IO5_REPORT.md). Complex Photoshop effects and exact typography remain outside full visual parity.
+Project hashing runs in the background, so opening and saving large projects does not stall the window. A project damaged on disk, such as one with a deleted image, is reported as changed on disk, and Save can replace it after you confirm. Paths that differ only in letter case open the same tab.
+
+HEIC/HEIF import uses native Windows WIC. Install the Windows HEIF/HEVC extensions when the decoder reports that they are missing. Files carrying a HEIF rotation were checked with WIC: it returns rotated pixels, so EXIF orientation is not applied twice. A real rotated iPhone photo has not been tested yet. PSD/PSB import now reads Bezier vector masks and converts six native layer-effect types. Text keeps its style runs and is placed by its first baseline, and PostScript font names (such as `BodoniMT`) resolve to installed families. Seven pinned real-format fixtures and vector reference checks are available through `windows/fetch-io-fixtures.ps1`; see [implementation, tests and Photoshop compatibility limits](IO1-IO5_REPORT.md). Complex Photoshop effects and exact typography remain outside full visual parity.
+
+## Floating selections and selection transforms (S2)
+
+- **Moving an outline:** with a marquee, lasso or wand in Replace mode, drag inside the selection to move only its outline. Shift locks the axis.
+- **Moving or copying pixels:** Ctrl-drag moves the selected pixels and Ctrl+Alt-drag copies them. Each is one undo step, and Esc restores the original exactly.
+- **Arrow keys:** Ctrl+arrows move the pixels the same way. Pixels moved past the layer edge grow the layer instead of being cut off.
+- **Transforming pixels:** with a selection, Ctrl+T (**Select > Transform Selected Pixels**) lifts the pixels onto a floating layer that carries the selection as its mask. Move, scale, rotate or Ctrl-drag to distort it; repeated gestures are not recorded separately. Enter commits everything as one "Transform Selection" undo step. Esc, undo and redo return to the exact state before Ctrl+T.
+- Switching tools, menu commands, the layers panel, Save and Close commit a pending floating selection first.
+
+The selection is still a canvas-sized mask, so outline or pixels moved off the canvas are lost. Floating selections work on pixel layers only, not on mask targets.
+
+## Live previews, adjustment panels and Camera Raw (F1–F4)
+
+Filter and adjustment dialogs are no longer modal: results appear on the canvas as you change values. Filters are computed in the background on a screen-sized copy, and only the newest request is kept. Use the **Preview** checkbox to compare with the original. While a dialog is open, the canvas can only be panned and zoomed.
+
+Every numeric parameter has a label, slider and input box:
+
+- Drag the label sideways to change the value: Shift for fine steps, Ctrl for coarse steps.
+- Double-click the label or slider to restore the default.
+
+Dedicated panels:
+
+- **Levels:** per-channel histogram, draggable input and output handles, three Auto modes, and black/gray/white-point eyedroppers that sample the canvas.
+- **Curves:** histogram backdrop and point editing.
+- **Hue/Saturation:** colored slider tracks, draggable color-band handles and range eyedroppers. With targeted adjustment, drag sideways on the canvas to change that color's saturation, or hold Ctrl to change its hue.
+- **Camera Raw:** a side panel along the right edge of the window. It previews on the canvas and shows an RGB readout under the pointer. Color grading uses four color wheels. Targeted adjustment drags on the canvas move the tone-curve region or the Color Mixer value for the color under the pointer.
+
+Gaussian Blur, Motion Blur, Bloom / Glow and Content-Aware Fill grow the layer when needed, so their results are no longer clipped at its edge. When exporting a JPEG, a preview shows the actual encoded result, its file size and a quality slider. The written file is byte-for-byte the previewed one.
+
+A preview that is still being computed cannot be interrupted; its result is discarded instead. Applying at full resolution after OK still runs on the UI thread. Layer-effect dialogs remain modal. See [S2/F1–F4 delivery notes](S2-F1-F4_REPORT.md) for limits and verification.
 
 ## Offline AI runtime and model management (AI1)
 
@@ -92,7 +124,7 @@ The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 
 - Rulers, drag-to-create/move/delete guides, guide lock/show/clear and configurable grids; document guides save in the existing version-11 manifest. Shared snapping supports canvas/layer edges and centers, guides and grid, with a six-screen-pixel tolerance and Ctrl bypass. View settings persist across tabs and launches.
 - Undo/redo for document and selection edits, including feather and selection restoration on crop/resize. Selection-only changes do not count as unsaved image content. Session colors and edit target are independent per project; X swaps foreground/background, D resets colors, Escape cancels a gesture and Space temporarily pans. Fill/clear, crop, canvas size and copy merged/paste image are available.
 - Invert, Exposure, per-channel Levels/Curves, per-color-range Hue/Saturation and Colorize, Black & White, Gradient Map, Color Balance, Gaussian/Motion Blur, Add Noise, Grain, Lens Correction, basic Camera Raw exposure and the original C Content-Aware Fill.
-- Create/edit all 12 adjustment kinds through **Layer > New Adjustment Layer / Edit Adjustment**. Folder masks/opacity and adjustment blend modes are applied; contiguous clipping stacks preserve the base's alpha. Filters and effects have modal previews and commit one undo entry.
+- Create/edit all 12 adjustment kinds through **Layer > New Adjustment Layer / Edit Adjustment**. Folder masks/opacity and adjustment blend modes are applied; contiguous clipping stacks preserve the base's alpha. Filters and adjustments preview live on the canvas; layer effects use modal previews. Each apply commits one undo entry.
 - All six layer effects: Stroke, Drop Shadow, Color Overlay, Inner Shadow, Outer Glow and Inner Glow. Effects follow the layer's masked source shape and transforms, with a bounded 512 MiB result cache and incremental stroke updates. Use **Layer > Layer Effects** to edit, disable or remove them.
 - Photoshop PSD/PSB 8-bit RGB/grayscale import with raw/RLE channels, folders, blend modes, opacity, raster masks, clipping, ICC conversion, resolution, Levels/Curves/Hue-Saturation/Invert adjustment conversion, editable horizontal type and `vogk` rectangle/rounded-rectangle/ellipse shapes. Bezier masks support closed/open subpaths, winding rules, path operations, inversion and disabled masks; arbitrary paths become raster masks. Legacy/modern descriptors convert Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Color Overlay and Stroke to native effects. Text retains the first style, tracking, leading, alignment and supported paragraph bounds; vertical/sheared/unevenly scaled type stays raster. Windows fonts can change imported editable type. Smart objects stay raster; unsupported effects/adjustments and conversions are listed under **Help > Import Conversion Report**. PSD import opens a new document; Save writes a `.comp` project.
 - Camera RAW development through LibRaw with Unicode paths, camera orientation, exposure, temperature/tint, Boost, camera-white-balance Reset, a coalesced/cancellable preview and full-resolution import. Use **File > Develop RAW Photo**, open a RAW file or drop it onto the canvas. The temperature slider is relative to an estimated 5000 K baseline; Reset retains the actual camera multipliers. The portable tone curve differs from Apple's RAW rendering. Camera-format coverage follows the bundled LibRaw decoder; no Windows Store codec is required for RAW.
@@ -103,13 +135,21 @@ The initial local runs passed all checks: BiRefNet 6/6 (minimum IoU 1.0), SAM 2 
 
 ## Differences and work remaining
 
-**This preview does not yet satisfy full feature parity with the Mac app.** It uses a tiled CPU renderer; Direct3D acceleration, Camera Raw targeted slider gestures and RGB hover readouts, full canvas filter previews and color-band editors, mesh distort, advanced text/shape interactions, selection transforms, editable arbitrary paths, complete Photoshop effect semantics and installer/shell integration remain to be migrated. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
+**This preview does not yet satisfy full feature parity with the Mac app.** The following remain to be migrated:
+
+- **Interface:** the left-side icon toolbar with grouped tools, the application icon and high-DPI icons (U1).
+- **Transforms:** mesh distort, and a distortion that stays pending until applied.
+- **Selections:** vector selection outlines that survive moving off the canvas, and Refine Edge.
+- **Filters:** interruptible previews, background full-resolution apply, and live canvas previews for layer effects.
+- **File formats:** editable arbitrary paths and complete Photoshop effect semantics.
+- **Distribution:** installer, code signing and shell integration (D1).
+- **Rendering:** Direct3D acceleration (optional). The current renderer is a tiled CPU renderer. Automatic updating is excluded from the target. See [the migration checklist](PORTING_STATUS.md).
 
 Unknown future layer effects are retained but omitted from the preview; a visible warning lists them and flattening/export/copy merged is blocked while present. Supported effects and adjustments now render. Hue/Saturation uses the original 33³ color-cube algorithm and C interpolation; Curves uses the original PCHIP algorithm and C lookup. Gaussian/Motion Blur, standalone Bloom and font rasterization use Windows implementations; Mac reference comparisons are still required to establish visual parity. Preview noise/grain coordinates and spatial filter extents still need matching against the original. PSD compression/depth support matches the upstream reader, but real Photoshop interoperability needs broader fixtures beyond the independent test files.
 
 Saving stages a complete sibling package, renames the existing project to a backup, installs the staged folder, then removes the backup. If replacement fails, it attempts to restore the original; if restoration also fails, the error identifies the preserved backup. These two Windows directory renames are **not a single atomic operation**; a power failure between them can leave `.compositor-stage-*` and `.compositor-backup-*` folders beside the project. Keep these folders for recovery: if the project itself is missing, the stage holds the latest save, and renaming `.compositor-stage-X` to the project name restores it. Automatic cleanup removes only staging folders older than 24 hours that have no backup with the same suffix; backups are never removed automatically. Third-party package files (e.g. Quick Look previews) are not regenerated in this preview.
 
-History currently retains up to 40 copy-on-write document snapshots; a dedicated history memory budget is still needed for very large projects. Full-resolution filtering/export can block the UI; saving uses an immutable worker snapshot. The canvas renders only the tiles on screen, at full resolution when zoomed in; see [ARCHITECTURE.md](ARCHITECTURE.md). No macOS build was run on this Windows machine.
+History retains up to 40 copy-on-write document snapshots within a per-project memory budget (see IO1–IO5 above). Full-resolution filter application and export can block the UI; saving uses an immutable worker snapshot. The canvas renders only the tiles on screen, at full resolution when zoomed in; see [ARCHITECTURE.md](ARCHITECTURE.md). No macOS build was run on this Windows machine.
 
 ## S1 / S3 selection tools
 
@@ -121,7 +161,7 @@ Use **Lasso** (`L`) and its **Polygonal** option; `Tab` switches freehand/polygo
 
 ## Shortcuts
 
-`Ctrl+N/O/S`, `Ctrl+I` import, `Ctrl+J` duplicate, `Ctrl+E` merge, `Ctrl+G` group, `Ctrl+Shift+G` ungroup, `Ctrl+[/]` lower/raise, `Ctrl+C/X/V` layer copy/cut/paste, `Ctrl+Alt+C/I` canvas/image size, `Ctrl+Z` undo, `Ctrl+Y` redo, `Ctrl+A/D` select/deselect, `Shift+F5` fill, `Alt+Delete` foreground fill, `Ctrl+Delete` background fill, `Delete` delete selection/layer (use **Edit > Clear Pixels** to clear a whole layer), `Ctrl+0/1` fit/actual pixels. Tools: `A/V/B/E/M/L/W/C/G/U/T/I/S/J/H/Z`. `Ctrl+R` rulers, `Ctrl+;` guides, `Ctrl+'` grid, `Ctrl+Shift+;` snap, `Ctrl+H` transform controls, `Ctrl+=/-` zoom. `[ / ]` changes size, `Shift+[ / ]` changes hardness, digits set opacity (two digits for an exact percentage), arrows nudge 1 px or 10 px with Shift, Ctrl+arrows move selected pixels, Shift+minus/plus cycles blend modes, and Tab cycles a supported tool mode. `Ctrl+M/L/U` opens Curves/Levels/Hue-Saturation; Invert uses `Ctrl+Alt+Shift+I` to preserve `Ctrl+I` import. Use **Edit > Keyboard Shortcuts** (`Ctrl+Alt+Shift+K`) to search, remap or restore all registered menu/tool/canvas bindings; conflicts are rejected and settings survive relaunch. Text inputs keep native typing/navigation. Alt-click sets a clone source; Shift adds a marquee/lasso selection; Alt subtracts, Shift+Alt intersects. Use a mask thumbnail or the **Paint mask** checkbox to target an existing mask.
+`Ctrl+N/O/S`, `Ctrl+I` import, `Ctrl+J` duplicate, `Ctrl+E` merge, `Ctrl+G` group, `Ctrl+Shift+G` ungroup, `Ctrl+[/]` lower/raise, `Ctrl+C/X/V` layer copy/cut/paste, `Ctrl+Alt+C/I` canvas/image size, `Ctrl+T` transform selected pixels (with a selection), `Ctrl+Z` undo, `Ctrl+Y` redo, `Ctrl+A/D` select/deselect, `Shift+F5` fill, `Alt+Delete` foreground fill, `Ctrl+Delete` background fill, `Delete` delete selection/layer (use **Edit > Clear Pixels** to clear a whole layer), `Ctrl+0/1` fit/actual pixels. Tools: `A/V/B/E/M/L/W/C/G/U/T/I/S/J/H/Z`. `Ctrl+R` rulers, `Ctrl+;` guides, `Ctrl+'` grid, `Ctrl+Shift+;` snap, `Ctrl+H` transform controls, `Ctrl+=/-` zoom. `[ / ]` changes size, `Shift+[ / ]` changes hardness, digits set opacity (two digits for an exact percentage), arrows nudge 1 px or 10 px with Shift, Ctrl+arrows move selected pixels, Shift+minus/plus cycles blend modes, and Tab cycles a supported tool mode. `Ctrl+M/L/U` opens Curves/Levels/Hue-Saturation; Invert uses `Ctrl+Alt+Shift+I` to preserve `Ctrl+I` import. Use **Edit > Keyboard Shortcuts** (`Ctrl+Alt+Shift+K`) to search, remap or restore all registered menu/tool/canvas bindings; conflicts are rejected and settings survive relaunch. Text inputs keep native typing/navigation. Alt-click sets a clone source; Shift adds a marquee/lasso selection; Alt subtracts, Shift+Alt intersects. Use a mask thumbnail or the **Paint mask** checkbox to target an existing mask.
 
 ## Layout
 
@@ -136,7 +176,7 @@ Original Compositor and the Windows port are MIT licensed. Qt is dynamically lin
 
 See [C1–C5 delivery notes](C1-C5_REPORT.md) for this step’s scope and validation. Application version remains 0.4.0; `.comp` remains 11.
 
-See [IO1–IO5 verification](IO1-IO5_REPORT.md) for this branch's fourteen-suite regression and real-format checks. The [2026-10-04 combined acceptance report](ACCEPTANCE_REPORT_2026-10-04.md) preserves the preceding thirteen-suite result (386 passes and 20 opt-in skips). The [development log](DEVELOPMENT_LOG.md) and [AI1 integration report](AI1_INTEGRATION_REPORT.md) preserve earlier stage evidence. The offline self-test launcher and delivery tooling include IO, canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites. AI application/test targets deploy Qt's native Schannel TLS backend beside the executable, so HTTPS does not require an external OpenSSL installation. Their embedded UTF-8 process manifests preserve Chinese, Japanese and emoji model/profiling paths independently of the machine's legacy ANSI code page; changing the console code page is not required.
+After S2, F1–F4 and IO1–IO5 were merged on 2026-10-05, all eighteen suites pass: 490 passes, 0 failures and 22 opt-in skips. See the [2026-10-05 work report](WORK_REPORT_2026-10-05.md) for the day's work, the remaining features and what the release still needs. See [IO1–IO5 verification](IO1-IO5_REPORT.md) for real-format checks. The [2026-10-04 combined acceptance report](ACCEPTANCE_REPORT_2026-10-04.md) preserves the preceding thirteen-suite result (386 passes and 20 opt-in skips). The [development log](DEVELOPMENT_LOG.md) and [AI1 integration report](AI1_INTEGRATION_REPORT.md) preserve earlier stage evidence. The offline self-test launcher and delivery tooling include IO, canvas, transform, text/shape and AI selection/background suites as well as the existing AI/model suites. AI application/test targets deploy Qt's native Schannel TLS backend beside the executable, so HTTPS does not require an external OpenSSL installation. Their embedded UTF-8 process manifests preserve Chinese, Japanese and emoji model/profiling paths independently of the machine's legacy ANSI code page; changing the console code page is not required.
 
 See [P1–P3 delivery notes](P1-P3_REPORT.md) for painting expansion, clone/gradient/fill verification and remaining memory/performance/visual acceptance.
 

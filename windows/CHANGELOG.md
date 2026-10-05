@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 2026-10-05 — integration, version remains 0.4.0
+
+- Merged the second IO acceptance fixes and S2/F1–F4 into `the-one-for-windows`. External project reloads now also wait while a filter dialog is previewing on the canvas.
+- The offline self-test bundle now includes the four S2/F1–F4 suites.
+- Eighteen suites pass: 490 passes, 0 failures and 22 opt-in skips. See the [2026-10-05 work report](WORK_REPORT_2026-10-05.md).
+
+### 2026-10-05 — S2 and F1–F4, version remains 0.4.0
+
+- Floating selections: drag inside a selection to move its outline. Ctrl-drag moves the selected pixels and Ctrl+Alt-drag copies them. Ctrl+T with a selection transforms the pixels, and Enter commits them as one undo step. Ctrl+arrow pixel moves now grow the layer instead of cutting pixels off.
+- Filter and adjustment dialogs are non-modal and preview live on the canvas. Values can be set with sliders, or by dragging their labels.
+- Levels gains a histogram, draggable handles, Auto and eyedroppers, and Curves a histogram backdrop. Hue/Saturation has draggable color bands, range eyedroppers and targeted drag on the canvas.
+- Camera Raw opens as a side panel with a canvas preview, an RGB readout under the pointer, color wheels and targeted curve/mixer drags.
+- Gaussian/Motion Blur, Bloom and Content-Aware Fill reach past the layer edge. JPEG export shows the encoded result and its file size.
+- Four new test suites. Kept `.comp` format 11. See [S2/F1–F4 delivery notes](S2-F1-F4_REPORT.md).
+
 ### 2026-10-05 — IO1–IO5 acceptance fixes, version remains 0.4.0
 
 - Editing no longer slows with the history budget: each command's memory is measured once, with a cheap metadata estimate, and the shared-image count runs only when a quick upper bound exceeds the budget (60 edits of a 400-layer document: 6.5 s before, 0.54 s now). An edit larger than the whole budget still keeps one undo step.
