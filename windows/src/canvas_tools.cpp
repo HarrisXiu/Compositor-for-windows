@@ -149,11 +149,11 @@ class MoveTool final : public CanvasTool {
   public:
     using CanvasTool::CanvasTool;
     void press(QMouseEvent *e) override {
-        if (c.session().autoSelect)
+        if (c.session().autoSelect && !c.floating_)
             c.selectLayerAt(c.start_, e->modifiers() & Qt::ShiftModifier);
         require(c.document_->active(), "Select a layer first");
-        emit c.editStarted();
-        c.beginMove(e->modifiers() & Qt::AltModifier);
+        c.startEdit();
+        c.beginMove(!c.floating_ && (e->modifiers() & Qt::AltModifier));
         c.dragging_ = true;
     }
     void move(QMouseEvent *e) override {

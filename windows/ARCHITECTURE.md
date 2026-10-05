@@ -16,6 +16,10 @@ The 0.4 preview separates the application shell, per-project interaction state a
 | `crop_tool.cpp` | Session crop draft, handles, ratios, snapping and explicit commit/cancel |
 | `document_dialogs.cpp` | New document and export dialogs |
 | `filter_dialogs.cpp` | Filter/adjustment dialogs and Camera Raw controls |
+| `filter_preview.cpp` / `preview_runner.cpp` | Live canvas preview of an open filter or adjustment dialog; newest-wins background jobs |
+| `parameter_control.cpp` | Slider + field + scrubbable label for every numeric parameter |
+| `adjustment_tools.cpp` / `adjustment_panels.cpp` / `adjustment_dialogs.cpp` | Levels, Curves, Hue/Saturation and Camera Raw panels: histograms, handles, bands, wheels, eyedroppers |
+| `selection_float.cpp` / `canvas_floating.cpp` | Floating selections: lifting, transforming and merging selected pixels |
 | `effect_dialogs.cpp` | Layer effect dialogs |
 | `editable_dialogs.cpp` | Editable text and shape dialogs |
 | `canvas.cpp` | View painting, coordinates, event routing and selection operations |
@@ -75,3 +79,9 @@ On this machine, `COMPOSITOR_BENCHMARK=1 compositor_tests tiledRenderingTiming` 
 `canvas_interaction.cpp` owns canvas keys, guide gestures, transform handles and view-only overlays. `canvas_layout.cpp` shares snapping across move, resize, crop, shape and guide operations; preferences persist through QSettings. Guide edits reuse the existing manifest field and enter document history. Tool options and colors stay in EditorSession.
 
 `shortcuts.cpp` registers menu actions, tools and canvas commands with stable IDs. The editor validates conflicts, persists only overrides, updates QAction bindings and maps canvas input before dispatch. Native text widgets retain typing/navigation, and the temporary Hand tool tracks its physical release key after remapping. Selection boundaries reuse a cached path; only dash phase changes on the animation timer.
+
+## Floating selections and live previews
+
+Selected pixels are lifted onto a temporary layer placed exactly over them, carrying the selection as its mask, so the ordinary transform handles move, scale, rotate and distort pixels and selection together. Merging draws the layer back through its transform, growing the source where needed, and turns the mask back into the selection. A floating selection is one interaction from the page's point of view: Ctrl+T emits `editStarted`, its gestures don't record history, and Enter emits a single `editFinished` while Escape's `editCanceled` restores the snapshot.
+
+A filter dialog leaves the window usable for viewing. `FilterPreview` hands the canvas a function applied to the copy of the document it draws (`setLivePreview`), never to the document. Filters run in the background on a copy of the layer reduced to what the screen shows; the canvas redraws the previewed layer over cached backdrops, so each result shows at once. Commands from the menus cancel the dialog first; view commands don't.

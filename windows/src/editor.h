@@ -73,6 +73,8 @@ class EditorWindow : public QMainWindow {
   public:
     explicit EditorWindow(std::shared_ptr<RecoveryStore> recovery = {});
     void openPath(const QString &path);
+    // Exports the current project to `path`; a JPEG first asks for its quality, with a preview.
+    void exportTo(const QString &path);
 
   protected:
     void closeEvent(QCloseEvent *) override;
@@ -88,6 +90,11 @@ class EditorWindow : public QMainWindow {
     void filePreferences();
     void externalReload(EditorPage *page, Document document, QByteArray fingerprint);
     QPointer<QDialog> aiSelectionDialog_;
+    // A dialog that leaves the window open: the edit it previews shows on the canvas meanwhile.
+    QPointer<QDialog> liveDialog_;
+    bool runLiveDialog(QDialog &dialog, bool sidePanel = false);
+    void setLiveEditingLocked(bool locked);
+    QList<QPointer<QWidget>> lockedWidgets_;
     QTreeWidget *layers_;
     QComboBox *blend_;
     QDoubleSpinBox *opacity_, *x_, *y_, *width_, *height_, *angle_, *brushSize_, *hardness_,

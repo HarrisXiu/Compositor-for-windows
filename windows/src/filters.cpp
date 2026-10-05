@@ -3,6 +3,7 @@
 #include "camera_raw.h"
 #include "dither.h"
 #include "document.h"
+#include "paint_surface.h"
 #include <QColor>
 #include <QJsonArray>
 #include <algorithm>
@@ -557,6 +558,31 @@ QJsonObject makeAdjustment(const QString &kind, const QJsonObject &settings) {
 }
 QImage applyAdjustment(const QImage &source, const QJsonObject &a) {
     return applyFilter(source, a.value("kind").toString(), adjustmentSettings(a));
+}
+double filterMargin(const QString &kind, const QJsonObject &s) {
+    if (kind == "Gaussian Blur")
+        return std::max(0.0, num(s, "radius", 2)) * 3 + 2;
+    if (kind == "Motion Blur")
+        return std::max(0.0, num(s, "distance", 10)) / 2 + 2;
+    if (kind == "Bloom / Glow")
+        return std::max(0.0, num(s, "bloomRadius", 24)) * 3 + 2;
+    return 0;
+}
+bool growForFilter(Layer &layer, const QString &kind, const QJsonObject &settings,
+                   const QRectF &documentArea) {
+    if (layer.image.isNull() || layer.group())
+        return false;
+    QRect bounds = layer.image.rect();
+    const int margin = int(std::ceil(filterMargin(kind, settings)));
+    if (margin > 0)
+        bounds.adjust(-margin, -margin, margin, margin);
+    if (!documentArea.isEmpty())
+        bounds |= paintSurfaceBounds(layer, documentArea);
+    if (bounds == layer.image.rect())
+        return false;
+    const auto size = layer.image.size();
+    growPaintSurface(layer, false, bounds);
+    return layer.image.size() != size;
 }
 QImage limitToSelection(const QImage &original, const QImage &filtered, const QImage &coverage) {
     if (coverage.isNull())

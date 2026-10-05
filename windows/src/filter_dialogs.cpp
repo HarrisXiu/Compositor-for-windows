@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MIT
 #include "editor.h"
+#include "adjustment_dialogs.h"
+#include "adjustment_panels.h"
 #include "camera_raw.h"
 #include "curve_editor.h"
 #include "demo.h"
 #include "dither.h"
 #include "editable_layers.h"
 #include "effects.h"
+#include "filter_preview.h"
 #include "filters.h"
 #include "image_scope.h"
 #include "language.h"
+#include "parameter_control.h"
 #include "photoshop.h"
 #include "raw_dialog.h"
 #include "render.h"
@@ -27,11 +31,13 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QDropEvent>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
 #include <QFontDatabase>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QFutureWatcher>
 #include <QImageWriter>
 #include <QInputDialog>
@@ -60,6 +66,8 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <memory>
+#include <optional>
 
 namespace compositor {
 class CameraPreview final : public QLabel {
@@ -131,6 +139,7 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         return;
     auto layer = p->document.active();
     require(asAdjustment || (layer && !layer->image.isNull()), "Select a pixel layer");
+    const auto targetId = p->document.activeId();
     QJsonObject settings = editExisting
                                ? adjustmentSettings(layer->metadata.value("adjustment").toObject())
                                : QJsonObject();
@@ -139,7 +148,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             ? renderDocument(p->document, p->document.size().scaled(256, 256, Qt::KeepAspectRatio))
             : layer->image;
     if (kind != "Invert" && kind != "Content-Aware Fill") {
-        QDialog dialog(this);
+        QDialog dialog(this, Qt::Tool);
+        dialog.setObjectName("filterDialog");
         dialog.setWindowTitle(kind);
         auto layout = new QVBoxLayout(&dialog);
         auto form = new QFormLayout;
@@ -151,8 +161,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             cameraSection = new QComboBox;
             cameraSection->setObjectName("cameraSection");
             cameraPages = new QStackedWidget;
+            // A side panel down the window's edge: the sections take the height there is.
             cameraPages->setMinimumSize(440, 360);
-            cameraPages->setMaximumHeight(420);
             layout->addWidget(cameraSection);
             layout->addWidget(cameraPages);
             connect(cameraSection, &QComboBox::currentIndexChanged, cameraPages,
@@ -180,11 +190,53 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             row->addWidget(preview, 1);
             row->addWidget(scope, 1);
             layout->addLayout(row);
+            // The previewed color under the pointer on the canvas.
+            auto readout = new QLabel("R —   G —   B —");
+            readout->setObjectName("cameraRawReadout");
+            readout->setToolTip("Red, green, and blue of the pixel under the pointer.");
+            layout->addWidget(readout);
         } else
             layout->addWidget(preview);
         auto source = previewImage.scaled(256, kind == "Camera Raw" ? 160 : 256,
                                           Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        // The edit shows on the canvas itself while the dialog stays open; the small preview in the
+        // dialog remains only for what the canvas cannot show (Camera Raw).
+        std::unique_ptr<FilterPreview> live;
+        // Levels, Curves and Hue/Saturation's own panels (histograms, handles, eyedroppers).
+        std::unique_ptr<AdjustmentDialog> tools;
+        if (FilterPreview::supported(kind)) {
+            live = std::make_unique<FilterPreview>(p, kind, asAdjustment, editExisting);
+            if (kind != "Camera Raw")
+                preview->hide();
+            if (auto readout = dialog.findChild<QLabel *>("cameraRawReadout")) {
+                // Follows the pointer, and the preview under a pointer held still.
+                auto pointer = std::make_shared<std::optional<QPointF>>();
+                auto show = [&live, readout, pointer] {
+                    const auto color = live && *pointer ? live->shownColor(**pointer) : QColor();
+                    readout->setText(color.isValid() ? QString("R %1   G %2   B %3")
+                                                           .arg(color.red())
+                                                           .arg(color.green())
+                                                           .arg(color.blue())
+                                                     : QString("R —   G —   B —"));
+                };
+                connect(p->canvas, &Canvas::pointerMoved, readout, [pointer, show](QPointF point) {
+                    *pointer = point;
+                    show();
+                });
+                connect(live.get(), &FilterPreview::shown, readout, show);
+            }
+            connect(live.get(), &FilterPreview::failed, &dialog,
+                    [this](const QString &message) { statusBar()->showMessage(uiText(message), 5000); });
+        }
         auto updatePreview = [&] {
+            if (tools)
+                refreshAdjustmentTools(*tools, kind);
+            if (live) {
+                live->update(settings);
+                // Camera Raw keeps its own preview for the scopes and sampling tools.
+                if (kind != "Camera Raw")
+                    return;
+            }
             try {
                 if (asAdjustment) {
                     auto snapshot = p->document;
@@ -259,6 +311,9 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         debounce.setSingleShot(true);
         connect(&debounce, &QTimer::timeout, &dialog, updatePreview);
         QHash<QString, QDoubleSpinBox *> controls;
+        QHash<QString, ParameterControl *> parameters;
+        CurveEditor *curveWidget = nullptr;
+        QComboBox *curveChannels = nullptr;
         QComboBox *rangeControl = nullptr;
         std::function<void()> storeRange = [] {};
         if (kind == "Hue/Saturation" || kind == "Levels") {
@@ -320,14 +375,14 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         }
         auto value = [&](const QString &key, const QString &label, double initial, double low,
                          double high, int decimals = 1) {
-            auto spin = new QDoubleSpinBox;
-            spin->setObjectName(key + "Control");
-            spin->setRange(low, high);
-            spin->setDecimals(decimals);
+            // A slider, a field and a label to drag; double-clicking the label puts the default back.
+            const double fallback = initial;
             initial = settings.value(key).toDouble(initial);
-            spin->setValue(initial);
+            auto parameter = new ParameterControl(low, high, decimals, initial, fallback);
+            addParameter(form, label, parameter, key + "Control");
+            auto spin = parameter->spin();
             controls[key] = spin;
-            form->addRow(label, spin);
+            parameters[key] = parameter;
             settings[key] = initial;
             connect(spin, &QDoubleSpinBox::valueChanged, &dialog, [&, key](double v) {
                 settings[key] = v;
@@ -623,20 +678,115 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             auto previewTool = new QComboBox;
             previewTool->setObjectName("cameraPreviewTool");
             previewTool->addItems({"Preview", "Sample point color", "Draw geometry guides",
-                                   "Sample white balance", "Sample defringe"});
+                                   "Sample white balance", "Sample defringe",
+                                   "Targeted: tone curve", "Targeted: color mixer"});
             auto previewTools = new QHBoxLayout;
             previewTools->addWidget(new QLabel("Preview tool"));
             previewTools->addWidget(previewTool);
+            // What dragging on the picture changes in the color mixer.
+            auto targetComponent = new QComboBox;
+            targetComponent->setObjectName("cameraTargetComponent");
+            targetComponent->addItems({"Hue", "Saturation", "Luminance"});
+            targetComponent->setCurrentIndex(1);
+            targetComponent->setVisible(false);
+            previewTools->addWidget(targetComponent);
             layout->insertLayout(layout->count() - 1, previewTools);
             preview->setToolTip("Choose Sample point color and click the preview; choose Draw "
                                 "geometry guides and drag up to four lines.");
-            connect(previewTool, &QComboBox::currentIndexChanged, &dialog, [&, preview](int mode) {
-                preview->mode = mode;
-                preview->setCursor(mode ? Qt::CrossCursor : Qt::ArrowCursor);
-                debounce.start(100);
-                preview->update();
-            });
+            // The same tools work on the canvas, where the layer is shown at full size, and two more:
+            // dragging up or down on the picture moves the tone curve for the tone there, or the
+            // color mixer for the colors near the hue there.
+            struct TargetDrag {
+                double y = 0, tone = 0, hue = -1;
+                QJsonObject start;
+                std::optional<QPointF> from;
+                bool active = false;
+            };
+            auto target = std::make_shared<TargetDrag>();
+            auto normalized = [&](QPointF point) -> std::optional<QPointF> {
+                const auto local = layer->placement(previewImage.size()).inverted().map(point);
+                if (!QRectF(QPointF(), QSizeF(previewImage.size())).contains(local))
+                    return std::nullopt;
+                return QPointF(local.x() / previewImage.width(), 1 - local.y() / previewImage.height());
+            };
+            auto onCanvas = [&, preview, target, normalized,
+                             targetComponent](const Canvas::PickEvent &e) {
+                using Phase = Canvas::PickEvent::Phase;
+                const int mode = preview->mode;
+                const auto at = normalized(e.point);
+                if (mode == 2) {
+                    if (e.phase == Phase::Press)
+                        target->from = at;
+                    else if (e.phase == Phase::Release && target->from && at &&
+                             QLineF(*target->from, *at).length() > .01)
+                        preview->guided(QLineF(*target->from, *at));
+                    return;
+                }
+                if (mode < 5) {
+                    if (e.phase == Phase::Press && at)
+                        preview->sampled(*at);
+                    return;
+                }
+                if (e.phase == Phase::Press) {
+                    target->active = false;
+                    if (!at)
+                        return;
+                    const auto color = previewImage.pixelColor(
+                        std::clamp(int(at->x() * previewImage.width()), 0, previewImage.width() - 1),
+                        std::clamp(int((1 - at->y()) * previewImage.height()), 0,
+                                   previewImage.height() - 1));
+                    target->tone = .2126 * color.redF() + .7152 * color.greenF() + .0722 * color.blueF();
+                    target->hue = color.hsvHueF() * 360;
+                    target->y = e.point.y();
+                    target->start = settings;
+                    target->active = true;
+                    return;
+                }
+                if (!target->active)
+                    return;
+                const double delta = (target->y - e.point.y()) * p->canvas->screenScale() * .35;
+                if (mode == 5) {
+                    const double tone = target->tone * 100;
+                    const char *key =
+                        tone < target->start.value("curveShadowSplit").toDouble(25)  ? "curveShadows"
+                        : tone < target->start.value("curveDarkSplit").toDouble(50)  ? "curveDarks"
+                        : tone < target->start.value("curveLightSplit").toDouble(75) ? "curveLights"
+                                                                                     : "curveHighlights";
+                    controls[key]->setValue(target->start.value(key).toDouble() + delta);
+                } else if (target->hue >= 0) {
+                    const QStringList families{"Reds",  "Oranges", "Yellows", "Greens",
+                                               "Aquas", "Blues",   "Purples", "Magentas"};
+                    const double centers[8] = {0, 30, 60, 120, 180, 240, 270, 300};
+                    for (int i = 0; i < 8; ++i) {
+                        double distance = std::abs(target->hue - centers[i]);
+                        if (distance > 180)
+                            distance = 360 - distance;
+                        const double weight = std::max(0.0, 1 - distance / 40);
+                        if (weight <= 0)
+                            continue;
+                        const auto key = "mixer" + families[i] + comboValue(targetComponent);
+                        controls[key]->setValue(target->start.value(key).toDouble() + delta * weight);
+                    }
+                }
+                if (e.phase == Phase::Release)
+                    target->active = false;
+            };
+            connect(&dialog, &QDialog::finished, p->canvas, [p] { p->canvas->setPickHandler({}); });
+            connect(previewTool, &QComboBox::currentIndexChanged, &dialog,
+                    [&, preview, onCanvas, targetComponent](int mode) {
+                        preview->mode = mode;
+                        preview->setCursor(mode && mode < 5 ? Qt::CrossCursor : Qt::ArrowCursor);
+                        targetComponent->setVisible(mode == 6);
+                        if (mode)
+                            p->canvas->setPickHandler(onCanvas);
+                        else
+                            p->canvas->setPickHandler({});
+                        debounce.start(100);
+                        preview->update();
+                    });
             preview->sampled = [&, assignColor](QPointF p) {
+                if (preview->mode >= 5)
+                    return;
                 int x = std::clamp(int(p.x() * previewImage.width()), 0, previewImage.width() - 1),
                     y = std::clamp(int((1 - p.y()) * previewImage.height()), 0,
                                    previewImage.height() - 1);
@@ -676,6 +826,37 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                 value("grade" + wheel + "Hue", wheel + " hue", 0, 0, 360);
                 value("grade" + wheel + "Saturation", wheel + " saturation", 0, 0, 100);
                 value("grade" + wheel + "Luminance", wheel + " luminance", 0, -100, 100);
+            }
+            {
+                // A wheel per range sets its hue (angle) and saturation (distance) in one drag.
+                auto wheels = new QWidget;
+                auto grid = new QGridLayout(wheels);
+                int index = 0;
+                for (auto name : QStringList{"Shadows", "Midtones", "Highlights", "Global"}) {
+                    auto wheel = new ColorWheel;
+                    wheel->setObjectName("grade" + name + "Wheel");
+                    auto hue = controls["grade" + name + "Hue"],
+                         saturation = controls["grade" + name + "Saturation"];
+                    wheel->hue = hue->value();
+                    wheel->saturation = saturation->value();
+                    wheel->changed = [hue, saturation](double h, double s) {
+                        hue->setValue(h);
+                        saturation->setValue(s);
+                    };
+                    auto follow = [wheel, hue, saturation] {
+                        wheel->hue = hue->value();
+                        wheel->saturation = saturation->value();
+                        wheel->update();
+                    };
+                    connect(hue, &QDoubleSpinBox::valueChanged, wheel, follow);
+                    connect(saturation, &QDoubleSpinBox::valueChanged, wheel, follow);
+                    auto cell = new QVBoxLayout;
+                    cell->addWidget(new QLabel(name), 0, Qt::AlignHCenter);
+                    cell->addWidget(wheel, 0, Qt::AlignHCenter);
+                    grid->addLayout(cell, index / 2, index % 2);
+                    ++index;
+                }
+                form->insertRow(0, wheels);
             }
             value("gradeBlending", "Blending", 50, 0, 100);
             value("gradeBalance", "Balance", 0, -100, 100);
@@ -834,6 +1015,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                 curve->points = settings.value("channels").toArray()[i].toArray();
                 curve->update();
             });
+            curveWidget = curve;
+            curveChannels = channels;
         } else if (kind == "Levels") {
             value("inputBlack", "Input black", 0, 0, 254, 0);
             value("inputWhite", "Input white", 255, 1, 255, 0);
@@ -878,10 +1061,11 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             }
             check("reversed", "Reverse", false);
         }
+        // Puts the selected range's (or channel's) values into the fields.
+        std::function<void()> loadRange = [] {};
         if (rangeControl) {
             storeRange();
-            connect(rangeControl, &QComboBox::currentTextChanged, &dialog,
-                    [&, rangeControl](const QString &) {
+            loadRange = [&, rangeControl] {
                         auto range = comboValue(rangeControl);
                         QJsonObject current;
                         if (kind == "Hue/Saturation") {
@@ -906,15 +1090,48 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                             settings[it.key()] = v;
                         }
                         debounce.start(100);
-                    });
+                    };
+            connect(rangeControl, &QComboBox::currentTextChanged, &dialog,
+                    [&](const QString &) { loadRange(); });
+        }
+        if (kind == "Levels" || kind == "Curves" || kind == "Hue/Saturation") {
+            tools = std::make_unique<AdjustmentDialog>(AdjustmentDialog{
+                dialog, layout, form, settings, controls, parameters, rangeControl, loadRange,
+                [&] { debounce.start(100); }, p, asAdjustment, editExisting, targetId});
+            if (kind == "Levels")
+                addLevelsTools(*tools);
+            else if (kind == "Curves")
+                addCurvesTools(*tools, curveWidget, curveChannels);
+            else
+                addHueSaturationTools(*tools);
+        }
+        if (live) {
+            auto previewToggle = new QCheckBox("Preview");
+            previewToggle->setObjectName("livePreviewControl");
+            previewToggle->setChecked(true);
+            previewToggle->setToolTip("Show the result on the canvas while adjusting.");
+            layout->addWidget(previewToggle);
+            connect(previewToggle, &QCheckBox::toggled, &dialog,
+                    [&live](bool on) { live->setEnabled(on); });
         }
         auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         updatePreview();
-        if (dialog.exec() != QDialog::Accepted)
+        // However the dialog ends, the canvas goes back to the document before anything is applied.
+        connect(&dialog, &QDialog::finished, &dialog, [&live] {
+            if (live)
+                live->stop();
+        });
+        const bool accepted = runLiveDialog(dialog, kind == "Camera Raw");
+        live.reset();
+        if (!accepted)
             return;
+        // Nothing else could have been edited meanwhile; check all the same.
+        require(page() == p && p->document.activeId() == targetId,
+                "The layer changed while the dialog was open");
+        layer = p->document.active();
     }
     if (kind == "Camera Raw")
         settings["visualizePointColor"] = -1;
@@ -947,17 +1164,23 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         });
         return;
     }
-    auto coverage = p->canvas->selectionForLayer(*layer);
-    if (kind == "Content-Aware Fill") {
-        require(!coverage.isNull(), "Select the area to fill first");
-        QByteArray bytes;
-        QBuffer buffer(&bytes);
-        buffer.open(QIODevice::WriteOnly);
-        coverage.save(&buffer, "PNG");
-        settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
-    }
+    const auto selection = p->canvas->session().selection;
+    const QRectF selected = p->canvas->selectionBounds();
+    if (kind == "Content-Aware Fill")
+        require(!selection.isNull() && !selected.isEmpty(), "Select the area to fill first");
     p->edit(kind, [&](Document &d) {
         auto l = d.active();
+        // A blur spreads past the layer's edge, and Content-Aware Fill fills all of a selection that
+        // reaches past it: the layer grows to hold them instead of cutting them off.
+        growForFilter(*l, kind, settings, kind == "Content-Aware Fill" ? selected : QRectF());
+        const auto coverage = layerSelection(d, *l, selection);
+        if (kind == "Content-Aware Fill") {
+            QByteArray bytes;
+            QBuffer buffer(&bytes);
+            buffer.open(QIODevice::WriteOnly);
+            coverage.save(&buffer, "PNG");
+            settings["maskPNG"] = QString::fromLatin1(bytes.toBase64());
+        }
         auto filtered = applyFilter(l->image, kind, settings);
         l->image = limitToSelection(l->image, filtered, coverage);
         l->metadata.remove("text");

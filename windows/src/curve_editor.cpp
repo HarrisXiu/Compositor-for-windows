@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "curve_editor.h"
+#include "adjustment_tools.h"
 #include "filters.h"
 #include <QMouseEvent>
 #include <QPainter>
@@ -22,6 +23,16 @@ QPointF CurveEditor::toWidget(QPointF p) const {
 void CurveEditor::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.fillRect(rect(), QColor(30, 32, 36));
+    if (showHistogram) {
+        const double peak = histogramScale(histogram);
+        if (peak > 0)
+            for (int i = 0; i < 256; ++i) {
+                const auto base = toWidget({double(i), 0}),
+                           top = toWidget({double(i), 255 * std::clamp(histogram[i] / peak, 0.0, 1.0)});
+                p.fillRect(QRectF(base.x(), top.y(), (width() - 24) / 256.0 + .5, base.y() - top.y()),
+                           histogramColor);
+            }
+    }
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(QColor(65, 68, 74));
     for (int i = 0; i <= 4; ++i) {
@@ -39,11 +50,31 @@ void CurveEditor::paintEvent(QPaintEvent *) {
         path.lineTo(toWidget({double(x), double(mapped.pixelColor(x, 0).red())}));
     p.setPen(QPen(QColor(95, 184, 255), 2));
     p.drawPath(path);
-    p.setBrush(Qt::white);
-    for (const auto &v : points) {
-        auto o = v.toObject();
+    for (int i = 0; i < points.size(); ++i) {
+        auto o = points[i].toObject();
+        p.setBrush(i == selected ? QColor(95, 184, 255) : QColor(Qt::white));
         p.drawEllipse(toWidget({o.value("x").toDouble(), o.value("y").toDouble()}), 4, 4);
     }
+}
+void CurveEditor::removeSelected() {
+    if (selected <= 0 || selected + 1 >= points.size())
+        return;
+    points.removeAt(selected);
+    selected = -1;
+    if (selectionChanged)
+        selectionChanged(selected);
+    if (changed)
+        changed(points);
+    update();
+}
+void CurveEditor::resetCurve() {
+    points = {QJsonObject{{"x", 0}, {"y", 0}}, QJsonObject{{"x", 255}, {"y", 255}}};
+    selected = -1;
+    if (selectionChanged)
+        selectionChanged(selected);
+    if (changed)
+        changed(points);
+    update();
 }
 void CurveEditor::mousePressEvent(QMouseEvent *e) {
     auto value = toValue(e->position());
@@ -60,10 +91,8 @@ void CurveEditor::mousePressEvent(QMouseEvent *e) {
     }
     if (e->button() == Qt::RightButton) {
         if (nearest > 0 && nearest + 1 < points.size()) {
-            points.removeAt(nearest);
-            if (changed)
-                changed(points);
-            update();
+            selected = nearest;
+            removeSelected();
         }
         return;
     }
@@ -82,6 +111,11 @@ void CurveEditor::mousePressEvent(QMouseEvent *e) {
         }
     }
     dragging_ = nearest;
+    if (nearest >= 0 && nearest != selected) {
+        selected = nearest;
+        if (selectionChanged)
+            selectionChanged(selected);
+    }
     mouseMoveEvent(e);
 }
 void CurveEditor::mouseMoveEvent(QMouseEvent *e) {
@@ -98,6 +132,8 @@ void CurveEditor::mouseMoveEvent(QMouseEvent *e) {
     points[dragging_] = QJsonObject{{"x", v.x()}, {"y", v.y()}};
     if (changed)
         changed(points);
+    if (selectionChanged)
+        selectionChanged(selected);
     update();
 }
 void CurveEditor::mouseReleaseEvent(QMouseEvent *) {
