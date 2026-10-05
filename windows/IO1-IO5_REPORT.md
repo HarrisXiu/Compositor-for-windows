@@ -1,0 +1,66 @@
+# IO1–IO5 implementation and verification — 2026-10-05
+
+Branch: `codex/io1-io5`, based on `15837df`. Work is isolated in the managed `io1-io5` worktree because another chat is editing S2 in the original checkout. Application version remains **0.4.0**, project format remains **11**. No saved fields, model binaries, updater or release package are added.
+
+IO1–IO4 are implemented. IO5 now implements Bezier path conversion, the six effects supported by the native document format, and pinned real-file regressions. This does **not** establish complete Photoshop interoperability: unsupported effects and appearance differences are listed below. The development plan's later full pixel-parity acceptance remains open.
+
+## Delivered behavior
+
+| Task | Implementation |
+| --- | --- |
+| IO1 | Parent-directory watching, package metadata polling, periodic asset SHA256 checks, 350 ms debounce, background loading and two stable observations. Manifest-only, image-only and atomic folder replacements refresh the canvas. Invalid/incomplete writes preserve the current document and retry. Modified tabs ask before replacing edits. Reload clears obsolete history and preserves zoom and a same-size selection. |
+| IO2 | Background recovery snapshots every 60 seconds; configurable/disabled interval. Separate per-process locked recovery folders, startup Recover/Discard/Cancel, and modified untitled recovery copies. Clean saves/accepted closes remove owned snapshots. Recent files retain 20 unique successful paths. Staging cleanup removes only unlocked UUID staging folders older than 24 hours and retains backups. |
+| IO3 | Default 512 MiB history budget per project, configurable from 16 to 8192 MiB. Unique shared QImage buffers count once; document metadata and selection/mask buffers count. Oldest entries are removed while preserving document pixels and retained undo/redo state. The existing 40-command cap also applies. |
+| IO4 | Unicode HEIC/HEIF/HIF import through Windows WIC, bounded allocation, RGBA conversion, ICC-to-sRGB conversion when a profile is available, EXIF orientation and DPI. Missing native decoding support produces a HEIF/HEVC extension diagnostic. |
+| IO5 | PSD/PSB Bezier knots and open/closed paths, even-odd/non-zero fill, union/subtract/intersect/XOR, initial fill, inversion and disabled masks. Vector/pixel mask coverage is combined on the layer grid; disabled pixel masks stay ineffective. Fill/stroke paths without raster channels are rasterized. Modern `lfx2`/`lmfx` and legacy `lrFX` convert native shadows, glows, overlay and stroke. Eight-bit grayscale was added for the real PSB fixture. |
+
+Saving checks the destination fingerprint again after encoding and before replacing the package. The monitor accepts the fingerprint of the staged document, so an external write after saving remains detectable. This check detects concurrent changes; it is not an interprocess transaction with unrelated editors. External producers should still follow [the safe project-writing contract](../docs/writing-comp-files.md).
+
+On Windows, monitoring package directories directly prevented atomic folder replacement. The implementation watches the parent and polls package metadata without holding directory handles open. Every three seconds it also checks referenced asset contents, covering equal-size/equal-timestamp replacements. Hashing/loading is asynchronous; large-project watcher and autosave throughput still needs hardware acceptance.
+
+Recovery snapshots do not mark the source saved or alter it. Restarted recovery opens an untitled modified copy; Save asks for a destination. Sessions owned by other running instances are excluded. Source backups are not automatically deleted. The history budget limits retained undo data, not the document, render caches, active gestures or total process memory.
+
+## Validation
+
+Release build: Windows 11 x64, Visual Studio 2026, Qt 6.10.2, existing pinned LibRaw/ONNX Runtime/DirectML SDKs. Final CTest: **14/14 suites pass, 0 failures**, 104.59 seconds. The IO suite logs **17 passes, 0 failures, 1 opt-in skip**; the native Photoshop suite logs **24 passes, 0 failures**. The new IO suite covers external manifest/asset/folder writes, incomplete writes, dirty-tab refusal, saved fingerprints, recovery locks, actual killed-process recovery, startup recovery, autosave without marking clean, undo-to-clean/redo snapshot recreation, stale staging cleanup, recent files, memory eviction/sharing and WIC Unicode pixels/alpha/errors.
+
+Photoshop regressions cover PSD and PSB, holes/inversion/disabled vector masks, vectors without raster channels, disabled pixel masks, all six native effect types, multi-effect descriptors, damaged data fallback and `.comp` save/reload. The Photoshop suite also passed with the native Windows Qt backend. Offscreen Qt does not load the Windows font database, so native real-file checks were used for the evidence below.
+
+The native hidden-window smoke test created/opened a demo `.comp` and exited successfully. An offscreen screenshot confirmed completed canvas rendering; its UI fonts are unavailable in that backend, so it is not a typography acceptance image. Build dependencies are deployed beside the executable; there is no new ZIP or installer. Python delivery-tool syntax and Git whitespace checks also pass.
+
+The opt-in real test loads each file, validates assets, renders it, saves/loads `.comp`, and verifies that the imported rendered result survives the round trip exactly. It records conversion warnings and writes `io-results.json` plus rendered PNGs. This round trip checks our representation; it does not by itself check Photoshop parity.
+
+| Pinned source fixture | Native Windows result | RGBA reference MAE, 0–255 scale |
+| --- | --- | --- |
+| `vector-layer` PSD | Import/render/round trip pass, 200×200 | 0 |
+| `vector-complex` PSD | Import/render/round trip pass, 200×200 | 0.13975 |
+| `winding-even-odd` PSD | Import/render/round trip pass, 99×93 | 0.42698 |
+| `winding-non-zero` PSD | Import/render/round trip pass, 99×93 | 0.32866 |
+| `effects` PSD | Seven layers, four with converted native effects; round trip pass | 8.59961; **full appearance parity fails** |
+| `psb-test` PSB | Eleven grayscale layers, one with converted effects; round trip pass | No meaningful composite reference; text font substituted with Tahoma |
+| libheif `example.heic` | Native WIC decode pass, 1280×854 | Decode acceptance only; no color/orientation reference comparison |
+
+Vector reference acceptance is mean RGBA error ≤1.0. The effects metric is reported without treating it as a passing Photoshop parity check. The PSB upstream `canvas.png` is a blank merged image and is deliberately not used to certify layered appearance. These are seven upstream files, not a complete camera/Photoshop corpus.
+
+## Reproduce
+
+Build with [the normal Windows build instructions](README.md#build-and-test). The opt-in fixture download uses immutable revisions and SHA256 checks, keeps the ag-psd license, and writes only under ignored artifacts by default:
+
+```powershell
+.\windows\fetch-io-fixtures.ps1
+$env:COMPOSITOR_IO_FIXTURES = (Resolve-Path artifacts\io1-io5\fixtures).Path
+$env:QT_QPA_PLATFORM = 'windows'
+.\build\windows\Release\compositor_io_tests.exe realFormatFixtures -o 'artifacts/io1-io5/real-tests.txt,txt'
+```
+
+Deploy Qt's `qwindows` platform plugin beside the test executable for native checks. CMake deploys `qoffscreen` for ordinary CI. Real fixtures are skipped by default; enabling them requires downloading the files and installing the necessary Windows HEIC codec. A missing codec is recorded as `codec_missing`, rather than decode acceptance. Both a fresh fixture download and cached SHA256 verification passed locally.
+
+Sources: [ag-psd test corpus](https://github.com/Agamnentzar/ag-psd/tree/387049670cb89b88fb8fe1b7c01aeacf98dd2e3b/test/read), [libheif sample](https://github.com/strukturag/libheif/blob/e981ebdf2b46a761820d41150ae8154d9dcc9e52/example.heic). The fixture script records all URLs/checksums; binaries are not committed. Local logs and renders are in the original checkout's ignored `artifacts/io1-io5/` directory, with a separate `build/io1-io5/` build to avoid the concurrent S2 task.
+
+## Photoshop compatibility boundaries
+
+Arbitrary paths become raster masks/pixels, rather than editable saved Bezier objects. Complex stroke styles and Photoshop-specific shape behavior are not fully preserved. The six native effect types retain enabled state, RGB/grayscale color, opacity, supported size/blur/distance/angle and inside/outside stroke parameters. Multiple instances retain the first. Centered stroke becomes outside stroke; effect blend modes become Normal, and spread/contours use native approximations with conversion warnings.
+
+Gradient/pattern overlay, bevel/emboss and satin are unsupported. Separate Photoshop fill opacity, global-light behavior, complex contours, exact blur semantics and typography can differ. Smart objects retain pixels. Sixteen/32-bit, CMYK/Lab and ZIP-compressed Photoshop channels remain unsupported. **IO5 must not be marked as complete Adobe effect or pixel-parity acceptance while these limits remain.** The visible import conversion report identifies losses for each layer.
+
+References used for the parser: [Adobe Photoshop file format](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/) and [Microsoft WIC HEIF codec](https://learn.microsoft.com/en-us/windows/win32/wic/heif-codec).

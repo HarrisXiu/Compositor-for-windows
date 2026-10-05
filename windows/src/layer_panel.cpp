@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include "editor.h"
 #include "distort.h"
+#include "editor.h"
 #include "language.h"
 #include "layer_operations.h"
 #include "layer_transfer.h"
@@ -344,10 +344,13 @@ void EditorWindow::refreshPanels() {
     auto p = page();
     for (int i = 0; i < tabs_->count(); ++i) {
         auto tab = qobject_cast<EditorPage *>(tabs_->widget(i));
-        if (tab)
-            tabs_->setTabText(
-                i, (tab->path.isEmpty() ? uiText("Untitled") : QFileInfo(tab->path).fileName()) +
-                       (tab->isModified() ? " *" : ""));
+        if (tab) {
+            auto title = tab->property("displayName").toString();
+            if (title.isEmpty())
+                title = uiText("Untitled");
+            tabs_->setTabText(i, (tab->path.isEmpty() ? title : QFileInfo(tab->path).fileName()) +
+                                     (tab->isModified() ? " *" : ""));
+        }
     }
     if (!p) {
         limitations_->setText("Create or open a project");

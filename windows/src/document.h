@@ -61,7 +61,8 @@ struct Document {
 };
 
 Document loadProject(const QString &path);
-void saveProject(const Document &document, const QString &path);
+QByteArray saveProject(const Document &document, const QString &path,
+                       const QByteArray &expectedFingerprint = {});
 QImage importImage(const QString &path);
 qint64 documentPixelBudget();
 QJsonObject makeTransform(QRectF bounds);

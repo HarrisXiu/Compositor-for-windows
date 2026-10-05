@@ -225,7 +225,7 @@ void premultiply(QImage &image) {
                 p[c] = uchar((int(p[c]) * p[3] + 127) / 255);
         }
 }
-void decodeChannels(BinaryReader &r, RawLayer &l, bool psb) {
+void decodeChannels(BinaryReader &r, RawLayer &l, bool psb, bool gray) {
     auto size = QSize(l.image.width(), l.image.height());
     if (!size.isEmpty()) {
         l.pixels = QImage(size, QImage::Format_RGBA8888_Premultiplied);
@@ -255,9 +255,14 @@ void decodeChannels(BinaryReader &r, RawLayer &l, bool psb) {
         } else {
             int c = id == -1 ? 3 : id;
             for (int y = 0; y < size.height(); ++y)
-                for (int x = 0; x < size.width(); ++x)
+                for (int x = 0; x < size.width(); ++x) {
                     l.pixels.scanLine(y)[x * 4 + c] =
                         uchar(plane.constData()[qsizetype(y) * size.width() + x]);
+                    if (gray && id == 0) {
+                        l.pixels.scanLine(y)[x * 4 + 1] = l.pixels.scanLine(y)[x * 4];
+                        l.pixels.scanLine(y)[x * 4 + 2] = l.pixels.scanLine(y)[x * 4];
+                    }
+                }
         }
     }
     if (!l.pixels.isNull())
@@ -440,11 +445,14 @@ void assemble(PhotoshopImport &import, std::vector<RawLayer> &raw, qint64 budget
         bool hasEffects =
             r.extra.contains("lfx2") || r.extra.contains("lrFX") || r.extra.contains("lmfx");
         auto note = [&](const QString &message) { import.conversions << r.name + ": " + message; };
-        if (hasEffects)
-            note("Photoshop layer effects were discarded; appearance may differ.");
         if (r.extra.contains("SoLd") || r.extra.contains("SoLE"))
             note("Smart object imported as pixels; linked contents cannot be edited.");
         auto editable = photoshopEditable(r.extra, d.size());
+        if (hasEffects && editable.effects.isEmpty())
+            note("Photoshop effects could not be converted; appearance may differ.");
+        if (hasEffects && r.fill != 1)
+            note("Photoshop fill opacity differs from layer opacity; native effect rendering may "
+                 "differ.");
         for (const auto &message : editable.notes)
             note(message);
         if (r.extra.contains("txt2") && editable.text.isEmpty())
@@ -554,6 +562,84 @@ void assemble(PhotoshopImport &import, std::vector<RawLayer> &raw, qint64 budget
             if (!r.maskLinked)
                 l.metadata["maskPlacement"] = l.metadata.value("transform");
         }
+        if (editable.vectorEnabled) {
+            bool drawnFromPath = false;
+            if (!group && adjustment.isEmpty() && l.image.isNull() &&
+                (editable.vectorFill.isValid() || editable.vectorStroke.isValid())) {
+                auto drawnPath = editable.vectorPath;
+                if (editable.vectorInverted) {
+                    QPainterPath canvasPath;
+                    canvasPath.addRect(QRectF(QPointF(), d.size()));
+                    drawnPath = canvasPath.subtracted(drawnPath);
+                }
+                auto bounds =
+                    drawnPath.isEmpty() ? QRectF(QPointF(), d.size()) : drawnPath.boundingRect();
+                double margin =
+                    editable.vectorStroke.isValid() ? editable.vectorStrokeWidth / 2 + 1 : 0;
+                bounds = bounds.adjusted(-margin, -margin, margin, margin).toAlignedRect();
+                require(bounds.width() >= 1 && bounds.height() >= 1 && bounds.width() <= MaxSide &&
+                            bounds.height() <= MaxSide &&
+                            bounds.width() * bounds.height() <= budget - colors,
+                        "Photoshop vector exceeds memory budget");
+                l.image = QImage(bounds.size().toSize(), QImage::Format_RGBA8888_Premultiplied);
+                require(!l.image.isNull(), "Not enough memory for Photoshop vector");
+                l.image.fill(Qt::transparent);
+                QPainter painter(&l.image);
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.translate(-bounds.topLeft());
+                painter.setBrush(editable.vectorFill.isValid() ? QBrush(editable.vectorFill)
+                                                               : Qt::NoBrush);
+                painter.setPen(editable.vectorStroke.isValid()
+                                   ? QPen(editable.vectorStroke, editable.vectorStrokeWidth)
+                                   : QPen(Qt::NoPen));
+                painter.drawPath(drawnPath);
+                painter.end();
+                l.metadata["imageFile"] = id + ".png";
+                l.metadata["transform"] = makeTransform(bounds);
+                rect = bounds;
+                colors += qint64(l.image.width()) * l.image.height();
+                drawnFromPath = true;
+                note("Bezier fill/stroke converted to pixels; the vector appearance is retained.");
+            }
+            if (!drawnFromPath) {
+                auto size = l.image.isNull() ? d.size() : l.image.size();
+                if (!l.mask.isNull() && !l.metadata.value("maskEnabled").toBool(true))
+                    l.mask.fill(255);
+                if (l.mask.isNull()) {
+                    require(qint64(size.width()) * size.height() <= budget - masks,
+                            "Photoshop vector mask exceeds memory budget");
+                    masks += qint64(size.width()) * size.height();
+                    l.mask = QImage(size, QImage::Format_Grayscale8);
+                    require(!l.mask.isNull(), "Not enough memory for vector mask");
+                    l.mask.fill(255);
+                }
+                QImage coverage(size, QImage::Format_RGBA8888_Premultiplied);
+                require(!coverage.isNull(), "Not enough memory for vector coverage");
+                coverage.fill(Qt::transparent);
+                QPainter painter(&coverage);
+                painter.setRenderHint(QPainter::Antialiasing);
+                painter.setTransform(l.placement(size).inverted());
+                painter.fillPath(editable.vectorPath, Qt::white);
+                painter.end();
+                for (int y = 0; y < size.height(); ++y) {
+                    auto target = l.mask.scanLine(y);
+                    auto pixels = coverage.constScanLine(y);
+                    for (int x = 0; x < size.width(); ++x) {
+                        int alpha = pixels[x * 4 + 3];
+                        if (editable.vectorInverted)
+                            alpha = 255 - alpha;
+                        target[x] = uchar((target[x] * alpha + 127) / 255);
+                    }
+                }
+                l.metadata["maskFile"] = id + ".mask.png";
+                l.metadata["maskEnabled"] = true;
+                l.metadata["maskLinked"] = true;
+                l.metadata.remove("maskPlacement");
+                note("Vector mask combined with the pixel mask on the layer grid.");
+            }
+        }
+        if (!editable.effects.isEmpty())
+            l.metadata["effects"] = editable.effects;
         if (r.clipping) {
             if (bases.contains(parent))
                 l.metadata["maskSourceID"] = bases.value(parent);
@@ -570,7 +656,7 @@ void assemble(PhotoshopImport &import, std::vector<RawLayer> &raw, qint64 budget
     if (!d.layers.isEmpty())
         d.metadata["activeLayerID"] = d.layers.back().id();
 }
-QImage mergedImage(BinaryReader &r, QSize size, int channels, bool psb) {
+QImage mergedImage(BinaryReader &r, QSize size, int channels, bool psb, bool gray) {
     int compression = r.u16();
     QImage image(size, QImage::Format_RGBA8888_Premultiplied);
     require(!image.isNull(), "Not enough memory for Photoshop composite");
@@ -597,11 +683,16 @@ QImage mergedImage(BinaryReader &r, QSize size, int channels, bool psb) {
                 for (auto count : counts)
                     r.skip(count);
         }
-        if (c < 4)
+        if (c < (gray ? 2 : 4))
             for (int y = 0; y < size.height(); ++y)
-                for (int x = 0; x < size.width(); ++x)
-                    image.scanLine(y)[x * 4 + c] =
-                        uchar(plane.constData()[qsizetype(y) * size.width() + x]);
+                for (int x = 0; x < size.width(); ++x) {
+                    auto value = uchar(plane.constData()[qsizetype(y) * size.width() + x]);
+                    if (gray && c == 0)
+                        for (int k = 0; k < 3; ++k)
+                            image.scanLine(y)[x * 4 + k] = value;
+                    else
+                        image.scanLine(y)[x * 4 + (gray ? 3 : c)] = value;
+                }
     }
     premultiply(image);
     return image;
@@ -621,13 +712,16 @@ PhotoshopImport readPhotoshop(QByteArrayView data, qint64 pixelBudget) {
     for (auto c : reserved)
         require(c == 0, "Invalid Photoshop header");
     int channels = r.u16();
-    require(channels >= 3 && channels <= 56, "Invalid Photoshop channel count");
+    require(channels >= 1 && channels <= 56, "Invalid Photoshop channel count");
     quint32 height = r.u32(), width = r.u32();
     require(width >= 1 && height >= 1 && width <= MaxSide && height <= MaxSide &&
                 qint64(width) * height <= MaxSurfacePixels && qint64(width) * height <= pixelBudget,
             "Photoshop canvas exceeds size or memory limit");
-    require(r.u16() == 8, "Only 8-bit RGB Photoshop files can be imported");
-    require(r.u16() == 3, "Only 8-bit RGB Photoshop files can be imported");
+    require(r.u16() == 8, "Only 8-bit RGB or grayscale Photoshop files can be imported");
+    int mode = r.u16();
+    bool gray = mode == 1;
+    require((gray && channels >= 1) || (mode == 3 && channels >= 3),
+            "Only 8-bit RGB or grayscale Photoshop files can be imported");
     r.skip(r.length());
     PhotoshopImport import{Document::create({int(width), int(height)}), {}};
     auto resources = r.section();
@@ -676,12 +770,12 @@ PhotoshopImport readPhotoshop(QByteArrayView data, qint64 pixelBudget) {
                 require(fits(raw, pixelBudget), "Photoshop project exceeds memory budget");
             }
             for (auto &l : raw)
-                decodeChannels(info, l, psb);
+                decodeChannels(info, l, psb, gray);
         }
     }
     assemble(import, raw, pixelBudget, profile);
     if (import.document.layers.isEmpty()) {
-        auto image = mergedImage(r, import.document.size(), channels, psb);
+        auto image = mergedImage(r, import.document.size(), channels, psb, gray);
         if (profile.isValid()) {
             image.setColorSpace(profile);
             image.convertToColorSpace(QColorSpace::SRgb);

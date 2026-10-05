@@ -10,14 +10,16 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDialog>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QJsonArray>
 #include <QMenu>
-#include <QDialog>
 #include <QMessageBox>
 #include <QPainter>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
@@ -28,7 +30,8 @@ namespace compositor {
 EditorPage *EditorWindow::page() const {
     return qobject_cast<EditorPage *>(tabs_->currentWidget());
 }
-EditorWindow::EditorWindow() {
+EditorWindow::EditorWindow(std::shared_ptr<RecoveryStore> recovery)
+    : recovery_(std::move(recovery)) {
     setWindowTitle("Compositor — Windows Preview");
     resize(1440, 900);
     setMinimumSize(900, 600);
@@ -51,10 +54,27 @@ EditorWindow::EditorWindow() {
         auto p = qobject_cast<EditorPage *>(tabs_->widget(index));
         if (p && canClose(p)) {
             tabs_->removeTab(index);
+            if (recovery_)
+                recovery_->remove(p->recoveryId);
             p->deleteLater();
         }
     });
     addPage(Document::create({1200, 800}));
+    if (recovery_ || qApp->applicationName() == "Compositor") {
+        try {
+            if (!recovery_)
+                recovery_ = std::make_shared<RecoveryStore>(
+                    QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
+                    "/recovery");
+            connect(&autosaveTimer_, &QTimer::timeout, this, &EditorWindow::autosave);
+            int seconds = QSettings().value("files/autosaveSeconds", 60).toInt();
+            if (seconds > 0)
+                autosaveTimer_.start(std::clamp(seconds, 1, 3600) * 1000);
+            QTimer::singleShot(0, this, &EditorWindow::recoverProjects);
+        } catch (const std::exception &e) {
+            statusBar()->showMessage(QString::fromUtf8(e.what()));
+        }
+    }
     statusBar()->showMessage(
         uiText("C/C++ Windows preview — Ctrl+O opens .comp folders; Ctrl+I imports images"));
     UiLanguage::instance().translateObject(this, true);
@@ -82,6 +102,14 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
 void EditorWindow::addPage(Document d, const QString &path) {
     auto p = new EditorPage(std::move(d));
     p->path = path;
+    p->monitor->setPath(path);
+    connect(
+        p->monitor, &ProjectMonitor::projectReady, this,
+        [this, p](const Document &d, const QByteArray &digest) { externalReload(p, d, digest); });
+    connect(p->monitor, &ProjectMonitor::reloadFailed, this, [this](const QString &error) {
+        statusBar()->showMessage(uiText("External project update could not be loaded: ") + error,
+                                 10000);
+    });
     int index = tabs_->addTab(p, path.isEmpty() ? uiText("Untitled") : QFileInfo(path).fileName());
     tabs_->setCurrentIndex(index);
     connect(p, &EditorPage::documentChanged, this, &EditorWindow::refreshPanels);
@@ -106,6 +134,14 @@ void EditorWindow::addPage(Document d, const QString &path) {
 }
 void EditorWindow::openPath(const QString &path) {
     try {
+        const auto absolute = QFileInfo(path).absoluteFilePath();
+        for (int i = 0; i < tabs_->count(); ++i) {
+            auto p = qobject_cast<EditorPage *>(tabs_->widget(i));
+            if (p && !p->path.isEmpty() && QFileInfo(p->path).absoluteFilePath() == absolute) {
+                tabs_->setCurrentIndex(i);
+                return;
+            }
+        }
         if (QFileInfo(path).isDir())
             addPage(loadProject(path), path);
         else if (isPhotoshopFile(path))
@@ -118,6 +154,8 @@ void EditorWindow::openPath(const QString &path) {
             d.addImage(QFileInfo(path).completeBaseName(), image);
             addPage(d);
         }
+        if (!isPhotoshopFile(path))
+            rememberFile(path);
     } catch (const std::exception &e) {
         showError(QString::fromUtf8(e.what()));
     }
@@ -168,6 +206,7 @@ void EditorWindow::openPhotoshop(const QString &path) {
             return;
         }
         addPage(std::move(result.first.document));
+        rememberFile(path);
         page()->importNotes = std::move(result.first.conversions);
         tabs_->setTabText(tabs_->currentIndex(), QFileInfo(path).completeBaseName());
         statusBar()->showMessage(
@@ -201,31 +240,57 @@ void EditorWindow::save(bool saveAs) {
     }
     p->canvas->finishTextEditing(true);
     p->canvas->cancelInteraction();
+    QByteArray expected;
+    if (path == p->path) {
+        expected = projectFingerprint(path);
+        if (p->externalConflict || expected != p->monitor->fingerprint()) {
+            if (QMessageBox::warning(
+                    this, uiText("Project Changed on Disk"),
+                    uiText("Saving will replace external changes. Replace the project on disk?"),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+                return;
+        }
+    } else
+        expected = projectFingerprint(path);
+    RecoveryStore::cleanStaging(QFileInfo(path).absolutePath());
     auto snapshot = p->document;
     const auto contentState = p->contentState;
     p->saving = true;
+    p->monitor->setPaused(true);
     statusBar()->showMessage(uiText("Saving project in background…"));
-    auto watcher = new QFutureWatcher<QString>(p);
-    connect(watcher, &QFutureWatcher<QString>::finished, this,
+    struct SaveResult {
+        QByteArray fingerprint;
+        QString error;
+    };
+    auto watcher = new QFutureWatcher<SaveResult>(p);
+    connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
             [this, p, watcher, path, contentState] {
-                auto error = watcher->result();
+                auto result = watcher->result();
                 p->saving = false;
                 watcher->deleteLater();
-                if (!error.isEmpty()) {
-                    showError(error);
+                if (!result.error.isEmpty()) {
+                    p->monitor->setPaused(false);
+                    showError(result.error);
                     return;
                 }
                 p->path = path;
+                p->externalConflict = false;
+                p->monitor->setPath(path, result.fingerprint);
+                p->monitor->setPaused(false);
+                rememberFile(path);
                 p->markSaved(contentState);
+                if (recovery_ && !p->isModified() && !p->autosaving) {
+                    recovery_->remove(p->recoveryId);
+                    p->recoveredState.reset();
+                }
                 refreshPanels();
                 statusBar()->showMessage(uiText("Saved " + path), 5000);
             });
-    watcher->setFuture(QtConcurrent::run([snapshot, path] {
+    watcher->setFuture(QtConcurrent::run([snapshot, path, expected] {
         try {
-            saveProject(snapshot, path);
-            return QString();
+            return SaveResult{saveProject(snapshot, path, expected), {}};
         } catch (const std::exception &e) {
-            return QString::fromUtf8(e.what());
+            return SaveResult{{}, QString::fromUtf8(e.what())};
         }
     }));
 }
@@ -260,7 +325,7 @@ void EditorWindow::fillSelection(bool erase, bool background) {
     const bool mask = p->canvas->paintMask();
     require(l && !(mask ? l->mask : l->image).isNull(), "Select a pixel layer or mask");
     const auto area = p->session.selection.isNull() ? QRect(QPoint(), p->document.size())
-                                                   : p->canvas->selectionBounds();
+                                                    : p->canvas->selectionBounds();
     if (area.isEmpty())
         return;
     p->edit(erase ? "Clear Pixels" : "Fill Selection", [&](Document &d) {
@@ -306,7 +371,7 @@ bool EditorWindow::canClose(EditorPage *p) {
     if (!p)
         return true;
     p->canvas->finishTextEditing(true);
-    if (p->saving) {
+    if (p->saving || p->autosaving) {
         showError("Wait for the background save to finish");
         return false;
     }
@@ -332,6 +397,10 @@ void EditorWindow::closeEvent(QCloseEvent *e) {
             return;
         }
     e->accept();
+    if (recovery_)
+        for (int i = 0; i < tabs_->count(); ++i)
+            if (auto p = qobject_cast<EditorPage *>(tabs_->widget(i)))
+                recovery_->remove(p->recoveryId);
 }
 void EditorWindow::showError(const QString &message) {
     QMessageBox::warning(this, "Compositor", message);

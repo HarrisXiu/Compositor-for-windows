@@ -2,6 +2,7 @@
 // Port of the descriptor and type-engine readers in Compositor/IO/PSD/PSDText.swift.
 #include "photoshop_editable.h"
 #include "binary_reader.h"
+#include "effects.h"
 #include <QJsonArray>
 #include <QVariant>
 #include <algorithm>
@@ -463,6 +464,234 @@ void vector(PhotoshopEditable &out, const QHash<QByteArray, QByteArrayView> &ext
     out.notes << "Shape is editable; its saved raster appearance is retained until edited.";
     Q_UNUSED(canvas);
 }
+void path(PhotoshopEditable &out, QByteArrayView bytes, QSize canvas) {
+    BinaryReader reader(bytes);
+    require(reader.u32() == 3, "Unsupported Photoshop vector mask version");
+    auto flags = reader.u32();
+    out.vectorEnabled = (flags & 4) == 0;
+    out.vectorInverted = (flags & 1) != 0;
+    require(reader.remaining() % 26 <= 3 && reader.remaining() <= 26 * 100000,
+            "Invalid Photoshop vector path length");
+    QPainterPath combined;
+    combined.setFillRule(Qt::OddEvenFill);
+    bool initialFill = false;
+    while (reader.remaining() >= 26) {
+        int selector = reader.u16();
+        BinaryReader record(reader.bytes(24));
+        if (selector == 8) {
+            initialFill = record.u16() != 0;
+            continue;
+        }
+        if (selector == 6 || selector == 7)
+            continue;
+        require(selector == 0 || selector == 3, "Orphan Photoshop vector knot");
+        int count = record.u16();
+        int operation = record.i16();
+        int fillRule = record.u16();
+        require(operation >= -1 && operation <= 3 && count <= reader.remaining() / 26,
+                "Invalid Photoshop vector subpath");
+        struct Knot {
+            QPointF incoming, anchor, outgoing;
+        };
+        QList<Knot> knots;
+        auto point = [&](BinaryReader &r) {
+            double y = r.i32() / 16777216.0 * canvas.height();
+            double x = r.i32() / 16777216.0 * canvas.width();
+            require(std::abs(x) <= 1000000 && std::abs(y) <= 1000000,
+                    "Photoshop vector coordinates exceed limit");
+            return QPointF(x, y);
+        };
+        for (int i = 0; i < count; ++i) {
+            int type = reader.u16();
+            require(selector == 0 ? (type == 1 || type == 2) : (type == 4 || type == 5),
+                    "Invalid Photoshop vector knot type");
+            Knot knot;
+            knot.incoming = point(reader);
+            knot.anchor = point(reader);
+            knot.outgoing = point(reader);
+            knots.append(knot);
+        }
+        if (knots.isEmpty())
+            continue;
+        QPainterPath subpath;
+        subpath.setFillRule(fillRule == 2 ? Qt::WindingFill : Qt::OddEvenFill);
+        subpath.moveTo(knots.first().anchor);
+        for (int i = 1; i < knots.size(); ++i)
+            subpath.cubicTo(knots[i - 1].outgoing, knots[i].incoming, knots[i].anchor);
+        if (selector == 0) {
+            subpath.cubicTo(knots.last().outgoing, knots.first().incoming, knots.first().anchor);
+            subpath.closeSubpath();
+        }
+        if (operation == -1) {
+            combined.setFillRule(subpath.fillRule());
+            combined.addPath(subpath);
+        } else if (operation == 0)
+            combined = combined.united(subpath).subtracted(combined.intersected(subpath));
+        else if (operation == 1)
+            combined = combined.united(subpath);
+        else if (operation == 2)
+            combined = combined.subtracted(subpath);
+        else
+            combined = combined.intersected(subpath);
+    }
+    while (reader.remaining())
+        require(reader.u8() == 0, "Invalid vector path padding");
+    if (initialFill) {
+        QPainterPath full;
+        full.addRect(QRectF(QPointF(), canvas));
+        combined = full.subtracted(combined);
+    }
+    out.vectorPath = combined;
+}
+QColor rgbColor(const QVariantMap &map) {
+    auto rgb = find(map, "Clr ").toMap();
+    if (rgb.isEmpty())
+        rgb = map;
+    if (auto gray = find(rgb, "Gry "); gray.isValid()) {
+        auto value = std::clamp(gray.toDouble() / 100, 0.0, 1.0);
+        return QColor::fromRgbF(value, value, value);
+    }
+    auto r = find(rgb, "Rd  "), g = find(rgb, "Grn "), b = find(rgb, "Bl  ");
+    require(r.isValid() && g.isValid() && b.isValid(), "Unsupported Photoshop effect color");
+    return QColor::fromRgbF(std::clamp(r.toDouble() / 255, 0.0, 1.0),
+                            std::clamp(g.toDouble() / 255, 0.0, 1.0),
+                            std::clamp(b.toDouble() / 255, 0.0, 1.0));
+}
+QJsonObject effectColor(QColor color) {
+    return {{"red", color.redF()}, {"green", color.greenF()}, {"blue", color.blueF()}};
+}
+void modernEffects(PhotoshopEditable &out, QByteArrayView bytes) {
+    BinaryReader reader(bytes);
+    require(reader.u32() == 0, "Unsupported Photoshop effects version");
+    auto map = Descriptor(reader).read();
+    bool visible = map.value("masterFXSwitch", true).toBool();
+    double scale = std::clamp(map.value("Scl ", 100).toDouble() / 100, 0.0, 100.0);
+    const QHash<QString, QString> types{{"DrSh", "shadow"},       {"IrSh", "innerShadow"},
+                                        {"OrGl", "outerGlow"},    {"IrGl", "innerGlow"},
+                                        {"SoFi", "colorOverlay"}, {"FrFX", "stroke"}};
+    for (auto it = map.begin(); it != map.end(); ++it) {
+        if (it.key() == "masterFXSwitch" || it.key() == "Scl ")
+            continue;
+        auto key = it.key();
+        // Multi-effect descriptors preserve the first instance supported by the native format.
+        QString source = key;
+        if (key.endsWith("Multi"))
+            source = key.left(key.size() - 5);
+        static const QHash<QString, QString> names{{"dropShadow", "DrSh"}, {"innerShadow", "IrSh"},
+                                                   {"outerGlow", "OrGl"},  {"innerGlow", "IrGl"},
+                                                   {"solidFill", "SoFi"},  {"frameFX", "FrFX"}};
+        source = names.value(source, source);
+        if (!types.contains(source)) {
+            if (it.value().metaType().id() == QMetaType::QVariantMap ||
+                it.value().metaType().id() == QMetaType::QVariantList)
+                out.notes << "Unsupported Photoshop effect: " + key + ".";
+            continue;
+        }
+        auto value = it.value();
+        if (value.metaType().id() == QMetaType::QVariantList) {
+            auto list = value.toList();
+            if (list.isEmpty())
+                continue;
+            if (list.size() > 1)
+                out.notes << "Multiple " + source + " effects converted to one instance.";
+            value = list.first();
+        }
+        auto settings = value.toMap();
+        try {
+            auto e = effectColor(rgbColor(settings));
+            e["enabled"] = visible && settings.value("enab", true).toBool();
+            e["opacity"] = std::clamp(settings.value("Opct", 100).toDouble() / 100, 0.0, 1.0);
+            const auto native = types.value(source);
+            auto blur = std::clamp(settings.value("blur", 0).toDouble() * scale, 0.0, 500.0);
+            if (native == "shadow" || native == "innerShadow") {
+                e["blur"] = blur;
+                e["distance"] =
+                    std::clamp(settings.value("Dstn", 0).toDouble() * scale, 0.0, 5000.0);
+                e["angle"] = std::clamp(settings.value("lagl", 120).toDouble(), -360.0, 360.0);
+            } else if (native == "stroke") {
+                e["size"] = std::clamp(settings.value("Sz  ", 1).toDouble() * scale, 0.0, 500.0);
+                auto style = settings.value("Styl").toString();
+                e["inside"] = style == "InsF";
+                if (style == "CtrF")
+                    out.notes << "Centered Photoshop stroke converted to outside stroke.";
+            } else if (native != "colorOverlay")
+                e["size"] = blur;
+            auto mode = settings.value("Md  ").toString();
+            if (!mode.isEmpty() && mode != "Nrml")
+                out.notes << "Effect blend mode " + mode + " converted to Normal.";
+            if (settings.value("Ckmt").toDouble() != 0 || settings.contains("TrnS"))
+                out.notes << "Effect spread/contour uses the native Compositor approximation.";
+            out.effects[native] = e;
+        } catch (const Error &e) {
+            out.notes << QString::fromUtf8(e.what());
+        }
+    }
+    validateEffects(out.effects);
+}
+void legacyEffects(PhotoshopEditable &out, QByteArrayView bytes) {
+    BinaryReader reader(bytes);
+    require(reader.u16() == 0, "Unsupported legacy Photoshop effects");
+    int count = reader.u16();
+    require(count <= 100, "Too many legacy Photoshop effects");
+    bool visible = true;
+    for (int i = 0; i < count; ++i) {
+        require(reader.string(4) == "8BIM", "Invalid Photoshop effect signature");
+        auto type = reader.string(4);
+        auto r = reader.section();
+        auto version = r.u32();
+        require(version == 0 || version == 2, "Unsupported legacy effect version");
+        if (type == "cmnS") {
+            visible = r.u8() != 0;
+            continue;
+        }
+        bool shadow = type == "dsdw" || type == "isdw", glow = type == "oglw" || type == "iglw";
+        if (!shadow && !glow && type != "sofi") {
+            out.notes << "Unsupported legacy effect: " + QString::fromLatin1(type);
+            continue;
+        }
+        QJsonObject effect;
+        if (shadow || glow) {
+            effect[shadow ? "blur" : "size"] = std::clamp(double(r.u32()), 0.0, 500.0);
+            if (r.u32())
+                out.notes << "Legacy effect intensity uses the native approximation.";
+            if (shadow) {
+                effect["angle"] = std::clamp(double(r.i32()), -360.0, 360.0);
+                effect["distance"] = std::clamp(double(r.u32()), 0.0, 5000.0);
+            }
+        } else
+            r.skip(4); // Solid fill stores only the blend key before its color.
+        int space = r.u16();
+        auto red = r.u16(), green = r.u16(), blue = r.u16();
+        r.u16();
+        require(space == 0, "Unsupported legacy effect color space");
+        effect["red"] = red / 65535.0;
+        effect["green"] = green / 65535.0;
+        effect["blue"] = blue / 65535.0;
+        if (shadow || glow)
+            r.skip(8);
+        if (type == "sofi") {
+            effect["opacity"] = r.u8() / 255.0;
+            effect["enabled"] = r.u8() != 0;
+        } else {
+            effect["enabled"] = r.u8() != 0;
+            if (shadow)
+                r.u8();
+            effect["opacity"] = r.u8() / 255.0;
+        }
+        out.effects[type == "dsdw"   ? "shadow"
+                    : type == "isdw" ? "innerShadow"
+                    : type == "oglw" ? "outerGlow"
+                    : type == "iglw" ? "innerGlow"
+                                     : "colorOverlay"] = effect;
+    }
+    if (!visible)
+        for (auto it = out.effects.begin(); it != out.effects.end(); ++it) {
+            auto effect = it.value().toObject();
+            effect["enabled"] = false;
+            it.value() = effect;
+        }
+    validateEffects(out.effects);
+}
 } // namespace
 PhotoshopEditable photoshopEditable(const QHash<QByteArray, QByteArrayView> &extra, QSize canvas) {
     PhotoshopEditable out;
@@ -483,6 +712,34 @@ PhotoshopEditable photoshopEditable(const QHash<QByteArray, QByteArrayView> &ext
         }
         if (out.shape.isEmpty())
             out.notes << "Photoshop vector was rasterized; this shape is unsupported for editing.";
+    }
+    if (extra.contains("vmsk") || extra.contains("vsms")) {
+        try {
+            path(out, extra.value(extra.contains("vmsk") ? "vmsk" : "vsms"), canvas);
+            if (extra.contains("SoCo"))
+                out.vectorFill = rgbColor(descriptor(extra.value("SoCo")));
+            if (extra.contains("vstk")) {
+                auto stroke = descriptor(extra.value("vstk"));
+                if (!find(stroke, "fillEnabled").toBool())
+                    out.vectorFill = QColor();
+                if (find(stroke, "strokeEnabled").toBool()) {
+                    out.vectorStroke = rgbColor(find(stroke, "strokeStyleContent").toMap());
+                    out.vectorStrokeWidth =
+                        std::clamp(find(stroke, "strokeStyleLineWidth").toDouble(), 0.0, 500.0);
+                }
+            }
+        } catch (const Error &e) {
+            out.vectorEnabled = false;
+            out.notes << QString::fromUtf8(e.what());
+        }
+    }
+    try {
+        if (extra.contains("lfx2") || extra.contains("lmfx"))
+            modernEffects(out, extra.value(extra.contains("lmfx") ? "lmfx" : "lfx2"));
+        else if (extra.contains("lrFX"))
+            legacyEffects(out, extra.value("lrFX"));
+    } catch (const Error &e) {
+        out.notes << QString::fromUtf8(e.what());
     }
     return out;
 }

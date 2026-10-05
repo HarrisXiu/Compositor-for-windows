@@ -2,6 +2,38 @@
 #pragma once
 #include "psd_fixture.h"
 #include <cmath>
+inline QByteArray psdBool(bool value) {
+    return QByteArray("bool") + char(value);
+}
+inline QByteArray vectorMaskFixture(bool hole = false, int flags = 0) {
+    PsdFixtureWriter w;
+    w.u32(3);
+    w.u32(flags);
+    w.u16(6);
+    w.bytes(QByteArray(24, 0));
+    w.u16(8);
+    w.u16(0);
+    w.bytes(QByteArray(22, 0));
+    auto rect = [&](double left, double top, double right, double bottom) {
+        w.u16(0);
+        w.u16(4);
+        w.u16(-1);
+        w.u16(1);
+        w.bytes(QByteArray(18, 0));
+        for (auto p : {QPointF(left, top), QPointF(right, top), QPointF(right, bottom),
+                       QPointF(left, bottom)}) {
+            w.u16(2);
+            for (int i = 0; i < 3; ++i) {
+                w.u32(quint32(qint32(p.y() * 16777216)));
+                w.u32(quint32(qint32(p.x() * 16777216)));
+            }
+        }
+    };
+    rect(.125, .125, .875, .875);
+    if (hole)
+        rect(.375, .375, .625, .625);
+    return w.data;
+}
 inline QByteArray psdDescriptor(const QByteArray &classId,
                                 const QList<std::pair<QByteArray, QByteArray>> &items,
                                 bool versioned = true) {

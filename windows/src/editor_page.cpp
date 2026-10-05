@@ -1,22 +1,48 @@
 // SPDX-License-Identifier: MIT
 #include "editor.h"
+#include <QJsonDocument>
+#include <QSettings>
 #include <QUndoCommand>
 #include <QVBoxLayout>
 
 namespace compositor {
-class DocumentCommand final : public QUndoCommand {
+class DocumentCommand final : public HistoryCommand {
   public:
     DocumentCommand(EditorPage *page, QString label, Document before, Document after,
                     QImage beforeSelection, QImage afterSelection, quint64 afterState)
-        : QUndoCommand(label), page_(page), before_(std::move(before)), after_(std::move(after)),
+        : HistoryCommand(label), page_(page), before_(std::move(before)), after_(std::move(after)),
           beforeSelection_(std::move(beforeSelection)), afterSelection_(std::move(afterSelection)),
           beforeState_(page->contentState), afterState_(afterState) {}
     QSet<QString> beforeLayers, afterLayers;
+    std::unique_ptr<HistoryCommand> copy() const override {
+        auto out = std::make_unique<DocumentCommand>(
+            page_, text(), before_, after_, beforeSelection_, afterSelection_, afterState_);
+        out->beforeState_ = beforeState_;
+        out->beforeLayers = beforeLayers;
+        out->afterLayers = afterLayers;
+        return out;
+    }
+    void memory(QHash<qint64, qint64> &images, qint64 &metadata) const override {
+        for (auto snapshot : {&before_, &after_}) {
+            metadata +=
+                QJsonDocument(snapshot->manifest()).toJson(QJsonDocument::Compact).size() * 2 + 512;
+            for (const auto &l : snapshot->layers) {
+                countImage(l.image, images);
+                countImage(l.mask, images);
+            }
+        }
+        countImage(beforeSelection_, images);
+        countImage(afterSelection_, images);
+    }
     void undo() override {
+        if (page_->history.rebuilding())
+            return;
         page_->session.selectedLayerIDs = beforeLayers;
         apply(before_, beforeSelection_, beforeState_);
     }
     void redo() override {
+        if (page_->history.rebuilding())
+            return;
         page_->session.selectedLayerIDs = afterLayers;
         apply(after_, afterSelection_, afterState_);
     }
@@ -36,10 +62,19 @@ class DocumentCommand final : public QUndoCommand {
     QImage beforeSelection_, afterSelection_;
     quint64 beforeState_, afterState_;
 };
-class SelectionCommand final : public QUndoCommand {
+class SelectionCommand final : public HistoryCommand {
   public:
     SelectionCommand(EditorPage *page, QString label, QImage before, QImage after)
-        : QUndoCommand(label), page_(page), before_(std::move(before)), after_(std::move(after)) {}
+        : HistoryCommand(label), page_(page), before_(std::move(before)), after_(std::move(after)) {
+    }
+    std::unique_ptr<HistoryCommand> copy() const override {
+        return std::make_unique<SelectionCommand>(page_, text(), before_, after_);
+    }
+    void memory(QHash<qint64, qint64> &images, qint64 &metadata) const override {
+        countImage(before_, images);
+        countImage(after_, images);
+        metadata += 256;
+    }
     void undo() override {
         apply(before_);
     }
@@ -49,6 +84,8 @@ class SelectionCommand final : public QUndoCommand {
 
   private:
     void apply(const QImage &selection) {
+        if (page_->history.rebuilding())
+            return;
         page_->session.selection = selection;
         page_->canvas->update();
         emit page_->canvas->selectionChanged();
@@ -65,7 +102,8 @@ EditorPage::EditorPage(Document source, QWidget *parent)
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(canvas);
-    history.setUndoLimit(40);
+    history.setMemoryBudget(QSettings().value("files/historyMiB", 512).toLongLong() * 1024 * 1024);
+    monitor = new ProjectMonitor(this);
     connect(canvas, &Canvas::editStarted, this, [this] {
         emit editWillStart();
         beforeInteraction_ = document;
@@ -130,6 +168,19 @@ void EditorPage::markSaved(quint64 state) {
     if (!isModified())
         history.setClean();
     emit documentChanged();
+}
+void EditorPage::replaceFromDisk(Document source) {
+    canvas->finishTextEditing(false);
+    canvas->cancelInteraction();
+    document = std::move(source);
+    history.clear();
+    contentState = ++nextContentState_;
+    savedContentState_ = contentState;
+    externalConflict = false;
+    if (!session.selection.isNull() && session.selection.size() != document.size())
+        session.selection = {};
+    session.cropFrame = {};
+    changed();
 }
 void EditorPage::record(const QString &label, const Document &before, const Document &after,
                         const QImage &beforeSelection, const QImage &afterSelection,

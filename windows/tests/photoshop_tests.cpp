@@ -11,6 +11,140 @@ using namespace compositor;
 class PhotoshopTests : public QObject {
     Q_OBJECT
   private slots:
+    void vectorMasksHolesInversionAndDisabled() {
+        for (bool psb : {false, true})
+            for (int flags : {0, 1, 4}) {
+                PsdFixtureLayer l;
+                l.bounds = {0, 0, 8, 8};
+                l.planes = {{-1, QByteArray(64, char(255))},
+                            {0, QByteArray(64, char(255))},
+                            {1, QByteArray(64, 0)},
+                            {2, QByteArray(64, 0)}};
+                l.extra["vmsk"] = vectorMaskFixture(true, flags);
+                auto result = readPhotoshop(psdFixture({l}, psb));
+                auto image = renderDocument(result.document);
+                QCOMPARE(image.pixelColor(2, 2).alpha(), flags == 1 ? 0 : 255);
+                QCOMPARE(image.pixelColor(4, 4).alpha(), flags == 4 ? 255 : flags == 1 ? 255 : 0);
+                QTemporaryDir dir;
+                auto path = dir.filePath("Vector.comp");
+                saveProject(result.document, path);
+                QCOMPARE(renderDocument(loadProject(path)), image);
+            }
+    }
+    void vectorFillWithoutRasterChannels() {
+        PsdFixtureLayer l;
+        l.bounds = {};
+        l.planes.clear();
+        l.extra["vmsk"] = vectorMaskFixture();
+        l.extra["SoCo"] =
+            psdDescriptor("null", {{"Clr ", psdObject("RGBC", {{"Rd  ", psdDouble(10)},
+                                                               {"Grn ", psdDouble(100)},
+                                                               {"Bl  ", psdDouble(240)}})}});
+        auto result = readPhotoshop(psdFixture({l}));
+        auto image = renderDocument(result.document);
+        QVERIFY(image.pixelColor(4, 4).blue() > 200);
+        QCOMPARE(image.pixelColor(0, 0).alpha(), 0);
+        l.extra["vmsk"] = vectorMaskFixture(false, 1);
+        image = renderDocument(readPhotoshop(psdFixture({l})).document);
+        QCOMPARE(image.pixelColor(4, 4).alpha(), 0);
+        QVERIFY(image.pixelColor(0, 0).blue() > 200);
+    }
+    void vectorMaskDoesNotEnableDisabledPixelMask() {
+        PsdFixtureLayer l;
+        l.hasMask = true;
+        l.maskFlags = 2;
+        l.planes.emplace_back(-2, QByteArray(4, char(0)));
+        l.extra["vmsk"] = vectorMaskFixture();
+        auto imported = readPhotoshop(psdFixture({l}, false, {2, 2}));
+        QVERIFY(renderDocument(imported.document).pixelColor(1, 1).alpha() > 0);
+    }
+    void effectsDescriptorsAndLegacyOverlay() {
+        auto color = psdObject(
+            "RGBC", {{"Rd  ", psdDouble(0)}, {"Grn ", psdDouble(0)}, {"Bl  ", psdDouble(255)}});
+        PsdFixtureWriter effects;
+        effects.u32(0);
+        effects.bytes(psdDescriptor("Lefx", {{"masterFXSwitch", psdBool(true)},
+                                             {"Scl ", psdUnit(100)},
+                                             {"SoFi", psdObject("SoFi", {{"enab", psdBool(true)},
+                                                                         {"Opct", psdUnit(100)},
+                                                                         {"Clr ", color}})},
+                                             {"DrSh", psdObject("DrSh", {{"enab", psdBool(false)},
+                                                                         {"Opct", psdUnit(50)},
+                                                                         {"Clr ", color},
+                                                                         {"blur", psdUnit(4)},
+                                                                         {"Dstn", psdUnit(3)}})}}));
+        PsdFixtureLayer l;
+        l.extra["lfx2"] = effects.data;
+        auto result = readPhotoshop(psdFixture({l}));
+        auto native = result.document.layers[0].metadata.value("effects").toObject();
+        QCOMPARE(native.value("colorOverlay").toObject().value("blue").toDouble(), 1.0);
+        QVERIFY(!native.value("shadow").toObject().value("enabled").toBool());
+        QCOMPARE(renderDocument(result.document).pixelColor(0, 0), QColor(Qt::blue));
+        PsdFixtureWriter legacy, overlay;
+        overlay.u32(2);
+        overlay.bytes("norm");
+        overlay.u16(0);
+        overlay.u16(0);
+        overlay.u16(65535);
+        overlay.u16(0);
+        overlay.u16(0);
+        overlay.u8(255);
+        overlay.u8(1);
+        overlay.bytes(QByteArray(10, 0));
+        legacy.u16(0);
+        legacy.u16(1);
+        legacy.bytes("8BIMsofi");
+        legacy.u32(overlay.data.size());
+        legacy.bytes(overlay.data);
+        l.extra.clear();
+        l.extra["lrFX"] = legacy.data;
+        QCOMPARE(renderDocument(readPhotoshop(psdFixture({l})).document).pixelColor(0, 0),
+                 QColor(Qt::green));
+    }
+    void invalidVectorsAndEffectsKeepPixelsWithReport() {
+        PsdFixtureLayer l;
+        l.extra["vmsk"] = vectorMaskFixture().left(20);
+        l.extra["lfx2"] = QByteArray(8, 0);
+        auto result = readPhotoshop(psdFixture({l}));
+        QVERIFY(!result.conversions.isEmpty());
+        QCOMPARE(result.document.layers[0].image.pixelColor(0, 0), QColor(Qt::red));
+    }
+    void allNativeEffectsAndMultiDescriptors() {
+        const auto color = psdObject("Grsc", {{"Gry ", psdDouble(25)}});
+        QList<std::pair<QByteArray, QByteArray>> items;
+        for (auto name : {"DrSh", "IrSh", "OrGl", "IrGl", "SoFi", "FrFX"})
+            items.append({name, psdObject(name, {{"enab", psdBool(true)},
+                                                 {"Clr ", color},
+                                                 {"Opct", psdUnit(75)},
+                                                 {"blur", psdUnit(2)},
+                                                 {"Sz  ", psdUnit(1)},
+                                                 {"Styl", psdEnum("Styl", "InsF")}})});
+        PsdFixtureWriter effects;
+        effects.u32(0);
+        effects.bytes(psdDescriptor("Lefx", items));
+        PsdFixtureLayer layer;
+        layer.extra["lfx2"] = effects.data;
+        auto imported = readPhotoshop(psdFixture({layer}, true));
+        auto native = imported.document.layers[0].metadata.value("effects").toObject();
+        QCOMPARE(native.size(), 6);
+        QCOMPARE(native.value("stroke").toObject().value("inside").toBool(), true);
+        QCOMPARE(native.value("colorOverlay").toObject().value("red").toDouble(),
+                 QColor::fromRgbF(.25, .25, .25).redF());
+        QVERIFY(!renderDocument(imported.document).isNull());
+        PsdFixtureWriter list;
+        list.bytes("VlLs");
+        list.u32(2);
+        list.bytes(items.first().second);
+        list.bytes(items.first().second);
+        effects.data.clear();
+        effects.u32(0);
+        effects.bytes(psdDescriptor("Lefx", {{"dropShadowMulti", list.data}}));
+        layer.extra["lfx2"] = effects.data;
+        imported = readPhotoshop(psdFixture({layer}));
+        QVERIFY(
+            imported.document.layers[0].metadata.value("effects").toObject().contains("shadow"));
+        QVERIFY(imported.conversions.join('\n').contains("Multiple"));
+    }
     void editableTypeAndParagraph() {
         PsdFixtureLayer l;
         l.extra["TySh"] = typeFixture();
@@ -164,7 +298,7 @@ class PhotoshopTests : public QObject {
                      .value("black")
                      .toInt(),
                  20);
-        QCOMPARE(result.conversions.size(), 3);
+        QCOMPARE(result.conversions.size(), 4);
     }
     void unusedChannelsSkipped() {
         PsdFixtureLayer l;

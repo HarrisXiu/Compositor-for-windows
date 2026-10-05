@@ -51,10 +51,14 @@ if(MSVC)
 endif()
 
 add_library(compositor_core STATIC
+    windows/src/project_io.cpp windows/src/project_io.h windows/src/wic_import.cpp
     windows/src/selection_operations.cpp windows/src/layer_operations.cpp windows/src/image_operations.cpp windows/src/distort.cpp windows/src/paint_surface.cpp
     windows/src/document.cpp windows/src/render.cpp windows/src/blend.cpp windows/src/filters.cpp windows/src/camera_raw.cpp windows/src/effects.cpp windows/src/editable_layers.cpp windows/src/text_fonts.cpp windows/src/photoshop.cpp windows/src/photoshop_editable.cpp windows/src/raw_import.cpp windows/src/dither.cpp windows/src/dither_pixels.cpp windows/src/warp_brush.cpp windows/src/demo.cpp)
 target_include_directories(compositor_core PUBLIC windows/src)
 target_link_libraries(compositor_core PUBLIC Qt6::Core Qt6::Gui Qt6::Svg Qt6::Concurrent compositor_pixels LibRaw)
+if(WIN32)
+    target_link_libraries(compositor_core PUBLIC windowscodecs ole32 propsys)
+endif()
 
 add_library(compositor_ai STATIC windows/src/ai_session.cpp windows/src/ai_preprocess.cpp windows/src/ai_sam.cpp
     windows/src/ai_models.cpp windows/src/ai_download.cpp windows/src/ai_selection.cpp windows/src/ai_background.cpp)
@@ -65,6 +69,7 @@ target_link_libraries(compositor_ai PUBLIC compositor_core OnnxRuntime DirectML 
 target_compile_definitions(compositor_ai PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_library(compositor_ui STATIC
+    windows/src/history.cpp windows/src/editor_io.cpp
     windows/src/shortcuts.cpp windows/src/shortcuts.h windows/src/canvas_layout.cpp windows/src/canvas_interaction.cpp windows/src/canvas_transform.cpp windows/src/editor_view.cpp windows/src/tool_options_extra.cpp
     windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp windows/src/canvas_text.cpp windows/src/canvas_text_editor.cpp
     windows/src/editor_menus.cpp windows/src/ai_models_dialog.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
@@ -92,6 +97,13 @@ add_custom_command(TARGET Compositor POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy
 
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(compositor_io_tests windows/tests/io_tests.cpp)
+    target_link_libraries(compositor_io_tests PRIVATE compositor_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(compositor_io_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME compositor_io COMMAND compositor_io_tests -o -,txt)
+    set_tests_properties(compositor_io PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     qt_add_executable(compositor_ai_background_tests windows/tests/ai_background_tests.cpp)
     target_link_libraries(compositor_ai_background_tests PRIVATE compositor_ui Qt6::Test)
     if(MSVC)
@@ -182,7 +194,7 @@ if(BUILD_TESTING)
     add_test(NAME compositor_text_shapes COMMAND compositor_text_shape_tests)
     set_tests_properties(compositor_text_shapes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        foreach(target compositor_ai_background_tests compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests)
+        foreach(target compositor_io_tests compositor_ai_background_tests compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests)
             foreach(library Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Network Qt6::Test LibRaw)
                 add_custom_command(TARGET ${target} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:${target}>")
@@ -195,7 +207,7 @@ if(BUILD_TESTING)
 endif()
 set(COMPOSITOR_AI_RUNTIME_TARGETS Compositor compositor_ai_probe)
 if(BUILD_TESTING)
-    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests)
+    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_io_tests compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests)
 endif()
 foreach(target ${COMPOSITOR_AI_RUNTIME_TARGETS})
     if(MSVC)

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "document.h"
 #include "effects.h"
+#include "project_io.h"
+#include "wic_import.h"
 #include <QBuffer>
 #include <QColorSpace>
 #include <QDir>
@@ -9,6 +11,7 @@
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QPainter>
 #include <QSaveFile>
 #include <QSet>
@@ -501,7 +504,8 @@ Document loadProject(const QString &path) {
     d.validateAssets();
     return d;
 }
-void saveProject(const Document &d, const QString &path) {
+QByteArray saveProject(const Document &d, const QString &path,
+                       const QByteArray &expectedFingerprint) {
     d.validateAssets();
     const auto manifest = QJsonDocument(d.manifest()).toJson();
     require(manifest.size() <= 4 * 1024 * 1024, "Manifest exceeds 4 MiB");
@@ -524,6 +528,9 @@ void saveProject(const Document &d, const QString &path) {
     const auto stageName = ".compositor-stage-" + nonce, backupName = ".compositor-backup-" + nonce;
     require(parent.mkdir(stageName), "Cannot create staging folder");
     QDir stage(parent.filePath(stageName));
+    QLockFile stageLock(stage.filePath("stage.lock"));
+    stageLock.setStaleLockTime(0);
+    require(stageLock.tryLock(), "Cannot lock staging folder");
     bool backedUp = false;
     try {
         require(stage.mkdir("images"), "Cannot create image directory");
@@ -541,6 +548,11 @@ void saveProject(const Document &d, const QString &path) {
         require(file.open(QIODevice::WriteOnly) && file.write(manifest) == manifest.size() &&
                     file.commit(),
                 "Cannot stage manifest");
+        const auto savedFingerprint = projectFingerprint(stage.path());
+        if (!expectedFingerprint.isEmpty())
+            require(projectFingerprint(path) == expectedFingerprint,
+                    "Project changed on disk during saving; external changes were preserved");
+        stageLock.unlock();
         if (destination.exists()) {
             require(parent.rename(destination.fileName(), backupName),
                     "Project is in use; cannot replace it");
@@ -554,13 +566,17 @@ void saveProject(const Document &d, const QString &path) {
         }
         if (backedUp)
             QDir(parent.filePath(backupName)).removeRecursively();
+        return savedFingerprint;
     } catch (...) {
+        stageLock.unlock();
         if (stage.exists())
             stage.removeRecursively();
         throw;
     }
 }
 QImage importImage(const QString &path) {
+    if (isHeifFile(path))
+        return importWicImage(path);
     QImageReader reader(path);
     reader.setAutoTransform(true);
     auto size = reader.size();

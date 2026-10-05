@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### 2026-10-05 — IO1–IO5, version remains 0.4.0
+
+- Added debounced external project/asset refresh with incomplete-write protection, dirty-tab confirmation and fingerprint checks around background saves.
+- Added background recovery snapshots, per-process recovery locks, startup recovery as unsaved copies, safe old staging cleanup and 20 recent files.
+- Added a configurable history memory budget that counts shared images once and evicts old commands without changing current content.
+- Added native WIC HEIC/HEIF import with Unicode paths, orientation, profile conversion and missing-codec diagnostics.
+- Added PSD/PSB Bezier masks and six native layer-effect conversions, grayscale import, a fourteenth regression suite and seven pinned real-format fixtures. Advanced Photoshop effects and complete visual parity remain limited; see [IO1–IO5 verification](IO1-IO5_REPORT.md).
+- Kept `.comp` format 11; no saved fields, updater or new release package.
+
 ### 2026-10-04 — Unicode model paths on CI, version remains 0.4.0
 
 - Reproduced the ONNX Runtime initialization crash with an emoji model filename on a legacy Chinese ANSI code page; the English GitHub runner cannot represent the original Chinese fixture either.

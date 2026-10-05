@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-#include "demo.h"
 #include "ai_models_dialog.h"
+#include "demo.h"
 #include "editor.h"
 #include "filters.h"
 #include "language.h"
@@ -18,6 +18,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStatusBar>
 #include <QTabWidget>
 
@@ -25,6 +26,18 @@ namespace compositor {
 void EditorWindow::buildMenus() {
     auto file = menuBar()->addMenu("&File");
     action(file, "New…", QKeySequence::New, [this] { createDocument(); });
+    recentMenu_ = file->addMenu("Open Recent");
+    connect(recentMenu_, &QMenu::aboutToShow, this, [this] {
+        recentMenu_->clear();
+        for (const auto &path : recentFiles()) {
+            auto a = recentMenu_->addAction(path);
+            connect(a, &QAction::triggered, this, [this, path] { openPath(path); });
+        }
+        recentMenu_->addSeparator();
+        auto clear = recentMenu_->addAction(uiText("Clear Recent Files"));
+        connect(clear, &QAction::triggered, this, [] { QSettings().remove("files/recent"); });
+    });
+    action(file, "File and History Preferences…", {}, [this] { filePreferences(); });
     action(file, "Open Project…", QKeySequence::Open, [this] {
         auto path = QFileDialog::getExistingDirectory(this, "Open .comp Project", {},
                                                       QFileDialog::ShowDirsOnly);
@@ -32,9 +45,10 @@ void EditorWindow::buildMenus() {
             openPath(path);
     });
     action(file, "Import Images…", QKeySequence("Ctrl+I"), [this] {
-        importFiles(QFileDialog::getOpenFileNames(this, "Import Images", {},
-                                                  "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tif "
-                                                  "*.tiff *.svg *.psd *.psb);;All Files (*)"));
+        importFiles(QFileDialog::getOpenFileNames(
+            this, "Import Images", {},
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tif "
+            "*.tiff *.svg *.heic *.heif *.hif *.psd *.psb);;All Files (*)"));
     });
     action(file, "Develop RAW Photo…", {}, [this] {
         auto path = QFileDialog::getOpenFileName(
@@ -58,6 +72,8 @@ void EditorWindow::buildMenus() {
         if (index >= 0 && canClose(page())) {
             auto p = page();
             tabs_->removeTab(index);
+            if (recovery_)
+                recovery_->remove(p->recoveryId);
             p->deleteLater();
         }
     });

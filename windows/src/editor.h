@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-#include "canvas.h"
 #include "ai_selection.h"
+#include "canvas.h"
+#include "history.h"
+#include "project_io.h"
 #include <QPointer>
 class QDialog;
 #include <QKeySequence>
 #include <QMainWindow>
 #include <QUndoStack>
 #include <functional>
+#include <optional>
 class QTabWidget;
 class QTreeWidget;
 class QDoubleSpinBox;
@@ -27,7 +30,11 @@ class EditorPage : public QWidget {
     Document document;
     EditorSession session;
     Canvas *canvas;
-    QUndoStack history;
+    HistoryStack history;
+    ProjectMonitor *monitor;
+    QString recoveryId = newId();
+    bool autosaving = false, externalConflict = false;
+    std::optional<quint64> recoveredState;
     std::shared_ptr<AiSelectionService> aiSelection = createAiSelectionService();
     QString path;
     bool saving = false;
@@ -42,6 +49,7 @@ class EditorPage : public QWidget {
         return contentState != savedContentState_;
     }
     void markSaved(quint64 state);
+    void replaceFromDisk(Document source);
     quint64 contentState = 0;
     bool interacting() const {
         return interacting_;
@@ -63,7 +71,7 @@ class EditorPage : public QWidget {
 class EditorWindow : public QMainWindow {
     Q_OBJECT
   public:
-    EditorWindow();
+    explicit EditorWindow(std::shared_ptr<RecoveryStore> recovery = {});
     void openPath(const QString &path);
 
   protected:
@@ -72,6 +80,13 @@ class EditorWindow : public QMainWindow {
 
   private:
     QTabWidget *tabs_;
+    QMenu *recentMenu_ = nullptr;
+    std::shared_ptr<RecoveryStore> recovery_;
+    QTimer autosaveTimer_;
+    void autosave();
+    void recoverProjects();
+    void filePreferences();
+    void externalReload(EditorPage *page, Document document, QByteArray fingerprint);
     QPointer<QDialog> aiSelectionDialog_;
     QTreeWidget *layers_;
     QComboBox *blend_;
