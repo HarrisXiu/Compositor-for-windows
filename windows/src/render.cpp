@@ -45,6 +45,7 @@ View makeView(const Document &d, QSize full, QRect pixels, bool halvings, bool p
 QMutex cacheMutex;
 QCache<std::pair<qint64, int>, QImage> halvingCache(256 * 1024); // KiB
 QCache<qint64, QImage> maskCache(128 * 1024);
+QCache<qint64, QImage> inverseMaskCache(128 * 1024);
 QCache<QString, EffectImage> effectCache(512 * 1024);
 template <typename Key>
 QImage cachedImage(QCache<Key, QImage> &cache, const Key &key,
@@ -73,21 +74,30 @@ template <typename Key> QImage takeCached(QCache<Key, QImage> &cache, const Key 
     return taken ? std::move(*taken) : QImage();
 }
 
-QImage alphaImage(const QImage &mask) {
+// The mask's values as coverage, or with `inverse` what it hides.
+QImage alphaImage(const QImage &mask, bool inverse = false) {
     QImage out(mask.size(), QImage::Format_RGBA8888_Premultiplied);
     require(!out.isNull(), "Not enough memory for mask");
+    const uchar flip = inverse ? 255 : 0;
     for (int y = 0; y < out.height(); ++y) {
         auto p = out.scanLine(y);
         auto m = mask.constScanLine(y);
         for (int x = 0; x < out.width(); ++x)
             for (int c = 0; c < 4; ++c)
-                p[x * 4 + c] = m[x];
+                p[x * 4 + c] = m[x] ^ flip;
     }
     return out;
 }
 // A mask as the coverage image it is drawn with, built once per mask rather than once per area.
 QImage maskSurface(const QImage &mask) {
     return cachedImage(maskCache, mask.cacheKey(), std::function([&] { return alphaImage(mask); }));
+}
+// What a mask hides, as coverage: cut out of a fully revealed area, it leaves 255 − c·(255 − m)
+// for a mask value m drawn with edge coverage c, so the mask blends into what surrounds it
+// without a seam along its edge.
+QImage inverseMaskSurface(const QImage &mask) {
+    return cachedImage(inverseMaskCache, mask.cacheKey(),
+                       std::function([&] { return alphaImage(mask, true); }));
 }
 bool premultipliedFourByte(QImage::Format format) {
     return format == QImage::Format_RGBA8888_Premultiplied ||
@@ -187,10 +197,30 @@ Layer maskPlacementLayer(const Layer &l) {
         maskLayer.metadata["transform"] = l.metadata.value("maskPlacement");
     return maskLayer;
 }
+// A mask placed apart from its layer covers the rest of the layer with its edge tone, as on the
+// Mac; one whose edge is mostly black (and any other) leaves the rest of the layer hidden.
+bool maskRevealsBeyond(const Layer &l) {
+    return l.metadata.value("maskPlacement").isObject() && !l.image.isNull() &&
+           maskBackground(l.mask) == 255;
+}
 void applyMask(QImage &surface, const Layer &l, const View &v) {
     if (l.mask.isNull() || !l.metadata.value("maskEnabled").toBool(true))
         return;
-    auto coverage = placed(maskPlacementLayer(l), maskSurface(l.mask), v);
+    const auto maskLayer = maskPlacementLayer(l);
+    QImage coverage;
+    if (maskRevealsBeyond(l)) {
+        // Everything revealed, then what the mask hides cut out of it.
+        coverage = QImage(v.size, QImage::Format_RGBA8888_Premultiplied);
+        require(!coverage.isNull(), "Not enough memory for layer preview");
+        coverage.fill(Qt::white);
+        QPainter painter(&coverage);
+        const bool smooth = smoothSampling(maskLayer);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+        painter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+        drawSource(painter, inverseMaskSurface(l.mask), maskLayer.placement(l.mask.size()) * v.map, v,
+                   smooth);
+    } else
+        coverage = placed(maskLayer, maskSurface(l.mask), v);
     QPainter painter(&surface);
     painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
     painter.drawImage(0, 0, coverage);
@@ -238,16 +268,20 @@ QImage shownArea(const Layer &l, const QRect &area) {
     if (maskApplies(l)) {
         QImage mask(area.size(), QImage::Format_RGBA8888_Premultiplied);
         require(!mask.isNull(), "Not enough memory for effects");
-        mask.fill(Qt::transparent);
+        // The layer past a mask placed apart from it shows the mask's edge tone.
+        const bool reveals = maskRevealsBeyond(l);
+        mask.fill(reveals ? Qt::white : Qt::transparent);
         Layer placement = maskPlacementLayer(l);
         QPainter p(&mask);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
+        if (reveals)
+            p.setCompositionMode(QPainter::CompositionMode_DestinationOut);
         auto transform =
             placement.placement(l.mask.size()) * l.placement(l.image.size()).inverted();
         if (!area.topLeft().isNull())
             transform *= QTransform::fromTranslate(-area.x(), -area.y());
         p.setTransform(transform);
-        p.drawImage(0, 0, maskSurface(l.mask));
+        p.drawImage(0, 0, reveals ? inverseMaskSurface(l.mask) : maskSurface(l.mask));
         p.end();
         QPainter q(&shown);
         q.setCompositionMode(QPainter::CompositionMode_DestinationIn);
@@ -677,20 +711,42 @@ void carryRenderCaches(const Layer &layer, bool mask, qint64 previousKey, const 
         return;
     if (!mask)
         carryHalvings(previousKey, image, region);
-    else if (auto surface = takeCached(maskCache, previousKey);
-             surface.size() == image.size() && image.format() == QImage::Format_Grayscale8) {
-        const auto surfaceKey = surface.cacheKey();
-        for (int y = region.top(); y <= region.bottom(); ++y) {
-            auto p = surface.scanLine(y);
-            auto m = image.constScanLine(y);
-            for (int x = region.left(); x <= region.right(); ++x)
-                for (int c = 0; c < 4; ++c)
-                    p[x * 4 + c] = m[x];
-        }
-        storeCached(maskCache, image.cacheKey(), surface);
-        carryHalvings(surfaceKey, surface, region);
-    }
+    else
+        // The mask's coverage image, and what it hides, follow the mask's changed pixels.
+        for (auto [cache, flip] : {std::pair{&maskCache, uchar(0)}, std::pair{&inverseMaskCache, uchar(255)}})
+            if (auto surface = takeCached(*cache, previousKey);
+                surface.size() == image.size() && image.format() == QImage::Format_Grayscale8) {
+                const auto surfaceKey = surface.cacheKey();
+                for (int y = region.top(); y <= region.bottom(); ++y) {
+                    auto p = surface.scanLine(y);
+                    auto m = image.constScanLine(y);
+                    for (int x = region.left(); x <= region.right(); ++x)
+                        for (int c = 0; c < 4; ++c)
+                            p[x * 4 + c] = m[x] ^ flip;
+                }
+                storeCached(*cache, image.cacheKey(), surface);
+                carryHalvings(surfaceKey, surface, region);
+            }
     carryEffects(layer, mask, previousKey, region);
+}
+int maskBackground(const QImage &mask) {
+    if (mask.isNull())
+        return 255;
+    // Only the edge is read, so this is cheap enough to ask at every render.
+    const bool gray = mask.format() == QImage::Format_Grayscale8;
+    const auto value = [&](int x, int y) {
+        return gray ? int(mask.constScanLine(y)[x]) : qGray(mask.pixel(x, y));
+    };
+    const int width = mask.width(), height = mask.height();
+    qint64 total = 0, count = 0;
+    for (int y = 0; y < height; ++y) {
+        const bool full = y == 0 || y == height - 1;
+        for (int x = 0; x < width; x = full || x == width - 1 ? x + 1 : width - 1) {
+            total += value(x, y);
+            ++count;
+        }
+    }
+    return total * 2 >= count * 255 ? 255 : 0;
 }
 QRectF layerExtent(const Layer &l) {
     if (l.group() || l.image.isNull() || l.metadata.value("adjustment").isObject())

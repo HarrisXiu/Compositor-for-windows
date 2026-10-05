@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "distort.h"
 #include "editable_layers.h"
+#include "render.h"
 #include <QJsonArray>
 #include <QPainter>
 #include <QPainterPath>
@@ -229,7 +230,9 @@ Warped warpImage(const QImage &image, const QJsonObject &transform,
               outHeight = std::max(1, int(std::ceil(height * factor)));
     QImage out(outWidth, outHeight, QImage::Format_RGBA8888_Premultiplied);
     require(!out.isNull(), "Not enough memory for the distorted layer");
-    out.fill(mask ? QColor(Qt::black) : QColor(Qt::transparent));
+    // Outside the shape a mask keeps its edge tone, as on the Mac; a layer is transparent there.
+    const int background = mask ? maskBackground(image) : 0;
+    out.fill(mask ? QColor(background, background, background) : QColor(Qt::transparent));
     const auto source = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
     const auto target = imageCorners(corners, transform.value("flipX").toBool(),
                                      transform.value("flipY").toBool());

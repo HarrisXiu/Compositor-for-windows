@@ -40,4 +40,8 @@ void prepareRender(const Document &document, QSize full, bool halvings);
 void carryRenderCaches(const Layer &layer, bool mask, qint64 previousKey, const QRect &changed);
 // The document area a layer draws on, its effects included; empty when it draws no pixels.
 QRectF layerExtent(const Layer &layer);
+// What a mask shows beyond its pixels once placed apart from its layer (or grown, blurred or
+// distorted past them): 255 or 0, whichever most of its edge is, as on the Mac, so a
+// reveal-all mask keeps revealing and a hide-all mask hiding.
+int maskBackground(const QImage &mask);
 } // namespace compositor

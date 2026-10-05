@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "paint_surface.h"
+#include "render.h"
 #include <QJsonArray>
 #include <QPainter>
 #include <cmath>
@@ -70,7 +71,8 @@ QPoint growPaintSurface(Layer &layer, bool mask, QRect bounds) {
     bounds |= source.rect();
     if (bounds == source.rect())
         return {};
-    auto image = padded(source, bounds, 0);
+    // A grown mask keeps its edge tone in the new area, as on the Mac.
+    auto image = padded(source, bounds, mask ? maskBackground(source) : 0);
     auto transform = target.transform();
     const auto oldSize = transform["size"].toArray();
     const QSizeF size(bounds.width() * oldSize[0].toDouble() / source.width(),

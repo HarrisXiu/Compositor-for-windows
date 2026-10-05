@@ -80,13 +80,24 @@ void Canvas::beginPaint(QMouseEvent *event) {
             placement = maskLayer.placement(original_.size());
         }
         double scale = std::max(.000001, std::sqrt(std::abs(placement.determinant())));
-        blurred_ =
-            gaussianBlur(original_,
-                         std::min({std::clamp(session_->blurRadius, .5, 50.0) / scale,
-                                   std::max(original_.width(), original_.height()) / 2.0, 250.0}),
-                         paintMask());
-        if (paintMask())
-            blurred_ = blurred_.convertToFormat(QImage::Format_Grayscale8);
+        const double sigma = std::min({std::clamp(session_->blurRadius, .5, 50.0) / scale,
+                                       std::max(original_.width(), original_.height()) / 2.0, 250.0});
+        if (paintMask()) {
+            // Past its pixels a mask keeps its edge tone, so blurring near its edge doesn't pull
+            // in the wrong one (as on the Mac).
+            const int margin = int(std::ceil(3 * sigma)) + 1;
+            QImage padded(original_.width() + 2 * margin, original_.height() + 2 * margin,
+                          QImage::Format_Grayscale8);
+            require(!padded.isNull(), "Not enough memory for stroke");
+            padded.fill(maskBackground(original_));
+            const auto gray = original_.convertToFormat(QImage::Format_Grayscale8);
+            for (int y = 0; y < gray.height(); ++y)
+                std::copy_n(gray.constScanLine(y), gray.width(), padded.scanLine(y + margin) + margin);
+            blurred_ = gaussianBlur(padded, sigma, true)
+                           .copy(margin, margin, original_.width(), original_.height())
+                           .convertToFormat(QImage::Format_Grayscale8);
+        } else
+            blurred_ = gaussianBlur(original_, sigma, false);
     }
     coverage_ = QImage(original_.size(), QImage::Format_Grayscale8);
     require(!coverage_.isNull(), "Not enough memory for stroke");

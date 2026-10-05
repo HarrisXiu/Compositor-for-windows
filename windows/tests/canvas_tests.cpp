@@ -1198,11 +1198,13 @@ class CanvasTests : public QObject {
         QCOMPARE(result.pixelColor(32, 32), QColor(Qt::red));
         p->history.undo();
         p->session.target = EditTarget::Mask;
-        p->session.foreground = Qt::white;
+        // The reveal-all mask grows in its edge tone, white (as on the Mac): filling black at the
+        // selection's half coverage leaves it half way.
+        p->session.foreground = Qt::black;
         action(w, "Fill with Foreground")->trigger();
         auto mask = paintTarget(*p->document.active(), true);
         auto q = mask.placement(mask.image.size()).inverted().map(QPointF(10, 10));
-        QCOMPARE(mask.image.constScanLine(int(q.y()))[int(q.x())], uchar(128));
+        QVERIFY(std::abs(int(mask.image.constScanLine(int(q.y()))[int(q.x())]) - 127) <= 1);
         QCOMPARE(p->document.active()->image, d.active()->image);
         p->document.validateAssets();
         p->history.undo();

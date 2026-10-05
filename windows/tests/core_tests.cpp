@@ -1,9 +1,11 @@
 #include "blend.h"
 #include "blend_reference.h"
 #include "camera_raw.h"
+#include "distort.h"
 #include "document.h"
 #include "effects.h"
 #include "filters.h"
+#include "paint_surface.h"
 #include "render.h"
 #include <QDir>
 #include <QElapsedTimer>
@@ -21,6 +23,58 @@ using namespace compositor;
 class CoreTests : public QObject {
     Q_OBJECT
   private slots:
+    void aMaskPlacedApartKeepsItsEdgeTone() {
+        // As on the Mac: past a mask placed apart from its layer, and wherever it grows or is
+        // distorted past its pixels, a mask shows the tone most of its edge has.
+        for (int tone : {255, 0}) {
+            QImage mask(10, 10, QImage::Format_Grayscale8);
+            mask.fill(tone);
+            for (int y = 4; y < 6; ++y)
+                for (int x = 4; x < 6; ++x)
+                    mask.scanLine(y)[x] = uchar(255 - tone);
+            QCOMPARE(maskBackground(mask), tone);
+            auto d = Document::create({20, 10});
+            QImage red(20, 10, QImage::Format_RGBA8888_Premultiplied);
+            red.fill(Qt::red);
+            d.addImage("Red", red);
+            auto layer = d.active();
+            layer->mask = mask;
+            layer->metadata["maskFile"] = d.activeId() + ".mask.png";
+            layer->metadata["maskLinked"] = false;
+            layer->metadata["maskPlacement"] = makeTransform({0, 0, 10, 10});
+            const auto shown = renderDocument(d);
+            QCOMPARE(qAlpha(shown.pixel(2, 2)), tone);
+            QCOMPARE(qAlpha(shown.pixel(4, 4)), 255 - tone);
+            QCOMPARE(qAlpha(shown.pixel(15, 5)), tone); // Past the mask, inside the layer.
+            // The same through the tiled renderer.
+            const auto area = renderArea(d, {{20, 10}, {12, 0, 8, 10}});
+            QCOMPARE(qAlpha(area.pixel(3, 5)), tone);
+            // Painting past the mask grows it in its edge tone.
+            Layer grown = *layer;
+            growPaintSurface(grown, true, {-5, 0, 15, 10});
+            QCOMPARE(grown.mask.width(), 15);
+            QCOMPARE(int(grown.mask.constScanLine(5)[0]), tone);
+            // A distortion of it fills its edge tone outside the new shape.
+            const QVector<QPointF> corners{{3, 0}, {7, 0}, {10, 10}, {0, 10}};
+            const auto warped = warpImage(mask, makeTransform({0, 0, 10, 10}), corners, true);
+            QCOMPARE(int(warped.image.constScanLine(0)[0]), tone);
+        }
+        // A reveal-all mask at a fractional position leaves no seam along its edge.
+        auto d = Document::create({20, 10});
+        QImage red(20, 10, QImage::Format_RGBA8888_Premultiplied);
+        red.fill(Qt::red);
+        d.addImage("Red", red);
+        QImage white(10, 10, QImage::Format_Grayscale8);
+        white.fill(255);
+        d.active()->mask = white;
+        d.active()->metadata["maskFile"] = d.activeId() + ".mask.png";
+        d.active()->metadata["maskLinked"] = false;
+        d.active()->metadata["maskPlacement"] = makeTransform({3.4, 0.3, 10, 10});
+        const auto shown = renderDocument(d);
+        for (int y = 0; y < 10; ++y)
+            for (int x = 0; x < 20; ++x)
+                QCOMPARE(qAlpha(shown.pixel(x, y)), 255);
+    }
     void cameraRawWhiteBalanceAndClipping() {
         QImage image(3, 1, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::transparent);
