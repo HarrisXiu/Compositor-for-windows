@@ -73,6 +73,11 @@ class EditorWindow : public QMainWindow {
   private:
     QTabWidget *tabs_;
     QPointer<QDialog> aiSelectionDialog_;
+    // A dialog that leaves the window open: the edit it previews shows on the canvas meanwhile.
+    QPointer<QDialog> liveDialog_;
+    bool runLiveDialog(QDialog &dialog);
+    void setLiveEditingLocked(bool locked);
+    QList<QPointer<QWidget>> lockedWidgets_;
     QTreeWidget *layers_;
     QComboBox *blend_;
     QDoubleSpinBox *opacity_, *x_, *y_, *width_, *height_, *angle_, *brushSize_, *hardness_,

@@ -66,7 +66,7 @@ target_compile_definitions(compositor_ai PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 add_library(compositor_ui STATIC
     windows/src/shortcuts.cpp windows/src/shortcuts.h windows/src/canvas_layout.cpp windows/src/canvas_floating.cpp windows/src/canvas_interaction.cpp windows/src/canvas_transform.cpp windows/src/editor_view.cpp windows/src/tool_options_extra.cpp
-    windows/src/editor.cpp windows/src/editor.h windows/src/editor_page.cpp windows/src/canvas_text.cpp windows/src/canvas_text_editor.cpp
+    windows/src/editor.cpp windows/src/editor.h windows/src/filter_preview.cpp windows/src/filter_preview.h windows/src/editor_page.cpp windows/src/canvas_text.cpp windows/src/canvas_text_editor.cpp
     windows/src/editor_menus.cpp windows/src/ai_models_dialog.cpp windows/src/tool_options.cpp windows/src/layer_panel.cpp
     windows/src/editor_layers.cpp windows/src/layer_transfer.cpp windows/src/image_dialogs.cpp windows/src/crop_tool.cpp
     windows/src/ai_background_dialog.cpp windows/src/ai_selection_dialog.cpp windows/src/selection_dialogs.cpp windows/src/document_dialogs.cpp windows/src/filter_dialogs.cpp windows/src/effect_dialogs.cpp
@@ -172,6 +172,13 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME compositor_transform COMMAND compositor_transform_tests)
     set_tests_properties(compositor_transform PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    qt_add_executable(compositor_live_preview_tests windows/tests/live_preview_tests.cpp)
+    target_link_libraries(compositor_live_preview_tests PRIVATE compositor_ui Qt6::Test)
+    if(MSVC)
+        target_compile_options(compositor_live_preview_tests PRIVATE /utf-8)
+    endif()
+    add_test(NAME compositor_live_preview COMMAND compositor_live_preview_tests)
+    set_tests_properties(compositor_live_preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     qt_add_executable(compositor_selection_transform_tests windows/tests/selection_transform_tests.cpp)
     target_link_libraries(compositor_selection_transform_tests PRIVATE compositor_ui Qt6::Test)
     if(MSVC)
@@ -189,7 +196,7 @@ if(BUILD_TESTING)
     add_test(NAME compositor_text_shapes COMMAND compositor_text_shape_tests)
     set_tests_properties(compositor_text_shapes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(WIN32)
-        foreach(target compositor_ai_background_tests compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests compositor_selection_transform_tests)
+        foreach(target compositor_ai_background_tests compositor_ai_selection_tests compositor_model_tests compositor_tests compositor_ai_tests compositor_ui_tests compositor_photoshop_tests compositor_raw_tests compositor_dither_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests compositor_selection_transform_tests compositor_live_preview_tests)
             foreach(library Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Svg Qt6::Network Qt6::Test LibRaw)
                 add_custom_command(TARGET ${target} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:${library}>" "$<TARGET_FILE_DIR:${target}>")
@@ -202,7 +209,7 @@ if(BUILD_TESTING)
 endif()
 set(COMPOSITOR_AI_RUNTIME_TARGETS Compositor compositor_ai_probe)
 if(BUILD_TESTING)
-    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests compositor_selection_transform_tests)
+    list(APPEND COMPOSITOR_AI_RUNTIME_TARGETS compositor_ai_background_tests compositor_ai_selection_tests compositor_ai_tests compositor_model_tests compositor_ui_tests compositor_layer_tests compositor_canvas_tests compositor_transform_tests compositor_text_shape_tests compositor_selection_transform_tests compositor_live_preview_tests)
 endif()
 foreach(target ${COMPOSITOR_AI_RUNTIME_TARGETS})
     if(MSVC)

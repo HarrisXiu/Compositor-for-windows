@@ -3,6 +3,7 @@
 #include "image_operations.h"
 #include "image_scope.h"
 #include "language.h"
+#include "live_dialog.h"
 #include "raw_dialog.h"
 #include "raw_fixture.h"
 #include <QAction>
@@ -70,7 +71,7 @@ class UiTests : public QObject {
         QVERIFY(filter);
         bool visited = false;
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (!dialog)
                 return;
             auto autoBalance = dialog->findChild<QPushButton *>("autoWhiteBalance");
@@ -113,7 +114,7 @@ class UiTests : public QObject {
         QVERIFY(filter);
         bool sampled = false;
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (!dialog)
                 return;
             auto tool = dialog->findChild<QComboBox *>("cameraPreviewTool");
@@ -140,7 +141,7 @@ class UiTests : public QObject {
         auto afterColor = page->document.active()->image;
         bool guided = false;
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (!dialog)
                 return;
             auto tool = dialog->findChild<QComboBox *>("cameraPreviewTool");
@@ -268,7 +269,7 @@ class UiTests : public QObject {
             QVERIFY(action);
             bool visited = false;
             QTimer::singleShot(20, [&] {
-                auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+                auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
                 if (!dialog)
                     return;
                 visited = true;
@@ -416,7 +417,7 @@ class UiTests : public QObject {
         QVERIFY(create && edit);
         bool visited = false;
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 visited = true;
                 auto spins = dialog->findChildren<QDoubleSpinBox *>();
@@ -435,7 +436,7 @@ class UiTests : public QObject {
                             .toObject();
         QCOMPARE(settings.value("ranges").toArray()[0].toObject().value("black").toInt(), 20);
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 auto combo = dialog->findChild<QComboBox *>();
                 auto spins = dialog->findChildren<QDoubleSpinBox *>();
@@ -479,7 +480,7 @@ class UiTests : public QObject {
                 stroke = action;
         QVERIFY(stroke);
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 auto spins = dialog->findChildren<QDoubleSpinBox *>();
                 if (spins.size() > 1)
@@ -541,7 +542,7 @@ class UiTests : public QObject {
                 edit = a;
         QVERIFY(edit);
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 auto text = dialog->findChild<QTextEdit *>();
                 if (text) {
@@ -613,7 +614,7 @@ class UiTests : public QObject {
         QVERIFY(exposure);
         bool visited = false;
         QTimer::singleShot(20, [&] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 visited = true;
                 auto spins = dialog->findChildren<QDoubleSpinBox *>();

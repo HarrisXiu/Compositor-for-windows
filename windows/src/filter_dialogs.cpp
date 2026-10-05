@@ -6,9 +6,11 @@
 #include "dither.h"
 #include "editable_layers.h"
 #include "effects.h"
+#include "filter_preview.h"
 #include "filters.h"
 #include "image_scope.h"
 #include "language.h"
+#include "parameter_control.h"
 #include "photoshop.h"
 #include "raw_dialog.h"
 #include "render.h"
@@ -27,6 +29,7 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QDropEvent>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
@@ -60,6 +63,7 @@
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <memory>
 
 namespace compositor {
 class CameraPreview final : public QLabel {
@@ -131,6 +135,7 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         return;
     auto layer = p->document.active();
     require(asAdjustment || (layer && !layer->image.isNull()), "Select a pixel layer");
+    const auto targetId = p->document.activeId();
     QJsonObject settings = editExisting
                                ? adjustmentSettings(layer->metadata.value("adjustment").toObject())
                                : QJsonObject();
@@ -139,7 +144,8 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             ? renderDocument(p->document, p->document.size().scaled(256, 256, Qt::KeepAspectRatio))
             : layer->image;
     if (kind != "Invert" && kind != "Content-Aware Fill") {
-        QDialog dialog(this);
+        QDialog dialog(this, Qt::Tool);
+        dialog.setObjectName("filterDialog");
         dialog.setWindowTitle(kind);
         auto layout = new QVBoxLayout(&dialog);
         auto form = new QFormLayout;
@@ -184,7 +190,20 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
             layout->addWidget(preview);
         auto source = previewImage.scaled(256, kind == "Camera Raw" ? 160 : 256,
                                           Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        // The edit shows on the canvas itself while the dialog stays open; the small preview in the
+        // dialog remains only for what the canvas cannot show (Camera Raw).
+        std::unique_ptr<FilterPreview> live;
+        if (FilterPreview::supported(kind)) {
+            live = std::make_unique<FilterPreview>(p, kind, asAdjustment, editExisting);
+            preview->hide();
+            connect(live.get(), &FilterPreview::failed, &dialog,
+                    [this](const QString &message) { statusBar()->showMessage(uiText(message), 5000); });
+        }
         auto updatePreview = [&] {
+            if (live) {
+                live->update(settings);
+                return;
+            }
             try {
                 if (asAdjustment) {
                     auto snapshot = p->document;
@@ -320,14 +339,13 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
         }
         auto value = [&](const QString &key, const QString &label, double initial, double low,
                          double high, int decimals = 1) {
-            auto spin = new QDoubleSpinBox;
-            spin->setObjectName(key + "Control");
-            spin->setRange(low, high);
-            spin->setDecimals(decimals);
+            // A slider, a field and a label to drag; double-clicking the label puts the default back.
+            const double fallback = initial;
             initial = settings.value(key).toDouble(initial);
-            spin->setValue(initial);
+            auto parameter = new ParameterControl(low, high, decimals, initial, fallback);
+            addParameter(form, label, parameter, key + "Control");
+            auto spin = parameter->spin();
             controls[key] = spin;
-            form->addRow(label, spin);
             settings[key] = initial;
             connect(spin, &QDoubleSpinBox::valueChanged, &dialog, [&, key](double v) {
                 settings[key] = v;
@@ -908,13 +926,33 @@ void EditorWindow::filter(const QString &kind, bool asAdjustment, bool editExist
                         debounce.start(100);
                     });
         }
+        if (live) {
+            auto previewToggle = new QCheckBox("Preview");
+            previewToggle->setObjectName("livePreviewControl");
+            previewToggle->setChecked(true);
+            previewToggle->setToolTip("Show the result on the canvas while adjusting.");
+            layout->addWidget(previewToggle);
+            connect(previewToggle, &QCheckBox::toggled, &dialog,
+                    [&live](bool on) { live->setEnabled(on); });
+        }
         auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         updatePreview();
-        if (dialog.exec() != QDialog::Accepted)
+        // However the dialog ends, the canvas goes back to the document before anything is applied.
+        connect(&dialog, &QDialog::finished, &dialog, [&live] {
+            if (live)
+                live->stop();
+        });
+        const bool accepted = runLiveDialog(dialog);
+        live.reset();
+        if (!accepted)
             return;
+        // Nothing else could have been edited meanwhile; check all the same.
+        require(page() == p && p->document.activeId() == targetId,
+                "The layer changed while the dialog was open");
+        layer = p->document.active();
     }
     if (kind == "Camera Raw")
         settings["visualizePointColor"] = -1;

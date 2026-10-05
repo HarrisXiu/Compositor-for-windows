@@ -3,6 +3,7 @@
 #include "demo.h"
 #include "editor.h"
 #include "language.h"
+#include "live_dialog.h"
 #include "paint_surface.h"
 #include "render.h"
 #include "shortcuts.h"
@@ -245,7 +246,7 @@ class CanvasTests : public QObject {
         int warnings = 0;
         QTimer closer;
         QObject::connect(&closer, &QTimer::timeout, [&] {
-            if (auto *box = QApplication::activeModalWidget()) {
+            if (auto *box = activeLiveDialog()) {
                 ++warnings;
                 box->close();
             }
@@ -1235,7 +1236,7 @@ class CanvasTests : public QObject {
         action(w, "Show Grid")->setChecked(true);
         const auto before = loadCanvasViewOptions();
         QTimer::singleShot(30, [] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog)
                 dialog->reject();
         });
@@ -1255,7 +1256,7 @@ class CanvasTests : public QObject {
         if (qEnvironmentVariableIsSet("COMPOSITOR_CANVAS_SCREENSHOTS"))
             w.grab().save("artifacts/c1-c5-ja-options.png");
         QTimer::singleShot(30, [] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog) {
                 if (qEnvironmentVariableIsSet("COMPOSITOR_CANVAS_SCREENSHOTS"))
                     dialog->grab().save("artifacts/c1-c5-ja-shortcuts.png");
@@ -1326,7 +1327,7 @@ class CanvasTests : public QObject {
         QTest::qWait(25);
         auto values = assignments();
         QTimer::singleShot(30, [] {
-            auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
             if (dialog)
                 dialog->reject();
         });

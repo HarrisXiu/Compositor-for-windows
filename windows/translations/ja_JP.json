@@ -742,5 +742,10 @@
   "Select a pixel layer and make a selection to transform": "変形するにはピクセルレイヤーを選択し、選択範囲を作成してください",
   "Floating selection is no longer available": "フローティング選択範囲は利用できなくなりました",
   "Transforming selected pixels — Enter applies, Esc cancels": "選択したピクセルを変形中 — Enter で適用、Esc でキャンセル",
-  "Transform Selected Pixels": "選択したピクセルを変形"
+  "Transform Selected Pixels": "選択したピクセルを変形",
+  "Drag to adjust. Double-click to reset.": "ドラッグで調整、ダブルクリックで初期値に戻します。",
+  "Drag sideways to adjust. Shift: fine steps. Ctrl: coarse steps. Double-click to reset.": "左右にドラッグして調整。Shift：細かく、Ctrl：大きく。ダブルクリックで初期値に戻します。",
+  "Show the result on the canvas while adjusting.": "調整中の結果をキャンバスに表示します。",
+  "Another dialog is already open": "別のダイアログが既に開いています",
+  "The layer changed while the dialog was open": "ダイアログを開いている間にレイヤーが変更されました"
 }

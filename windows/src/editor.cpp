@@ -16,12 +16,16 @@
 #include <QJsonArray>
 #include <QMenu>
 #include <QDialog>
+#include <QDockWidget>
+#include <QEventLoop>
 #include <QMessageBox>
 #include <QPainter>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QToolBar>
+#include <algorithm>
 #include <QtConcurrent/QtConcurrentRun>
 
 namespace compositor {
@@ -68,10 +72,13 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
     if (menuSource.isEmpty())
         menuSource = menu->title();
     Shortcuts::instance().registerAction(a, "menu/" + menuSource + "/" + title, "Menus");
-    connect(a, &QAction::triggered, this, [this, callback] {
+    connect(a, &QAction::triggered, this, [this, callback, a] {
         try {
             if (aiSelectionDialog_)
                 aiSelectionDialog_->reject();
+            // Any command but changing the view leaves the dialog and what it previews behind.
+            if (liveDialog_ && !a->property("keepsLiveDialog").toBool())
+                liveDialog_->reject();
             callback();
         } catch (const std::exception &e) {
             showError(QString::fromUtf8(e.what()));
@@ -325,7 +332,57 @@ bool EditorWindow::canClose(EditorPage *p) {
     }
     return false;
 }
+// Shows a dialog without blocking the window, and returns once it has ended. Editing is locked
+// meanwhile: the canvas only pans and zooms, and the panels, tool bars and tabs are disabled, so
+// the dialog's edit still applies to the layer it was opened on. Commands from the menus end it first.
+bool EditorWindow::runLiveDialog(QDialog &dialog) {
+    require(!liveDialog_, "Another dialog is already open");
+    liveDialog_ = &dialog;
+    setLiveEditingLocked(true);
+    struct Unlock {
+        EditorWindow *window;
+        ~Unlock() {
+            window->setLiveEditingLocked(false);
+            window->liveDialog_ = nullptr;
+        }
+    } unlock{this};
+    dialog.setModal(false);
+    dialog.adjustSize();
+    // Beside the canvas rather than over it.
+    const auto frame = frameGeometry();
+    dialog.move(std::max(frame.left(), frame.right() - dialog.width() - 24), frame.top() + 90);
+    QEventLoop loop;
+    connect(&dialog, &QDialog::finished, &loop, &QEventLoop::quit);
+    dialog.show();
+    dialog.raise();
+    if (dialog.isVisible())
+        loop.exec();
+    return dialog.result() == QDialog::Accepted;
+}
+void EditorWindow::setLiveEditingLocked(bool locked) {
+    if (auto p = page())
+        p->canvas->setInputLocked(locked);
+    if (!locked) {
+        for (auto widget : lockedWidgets_)
+            if (widget)
+                widget->setEnabled(true);
+        lockedWidgets_.clear();
+        return;
+    }
+    QList<QWidget *> candidates{tabs_->tabBar()};
+    for (auto dock : findChildren<QDockWidget *>())
+        candidates << dock;
+    for (auto bar : findChildren<QToolBar *>())
+        candidates << bar;
+    for (auto widget : candidates)
+        if (widget->isEnabled()) {
+            widget->setEnabled(false);
+            lockedWidgets_ << widget;
+        }
+}
 void EditorWindow::closeEvent(QCloseEvent *e) {
+    if (liveDialog_)
+        liveDialog_->reject();
     if (aiSelectionDialog_)
         aiSelectionDialog_->reject();
     for (int i = 0; i < tabs_->count(); ++i)

@@ -357,6 +357,9 @@ void EditorWindow::buildMenus() {
     action(filters, "Remove Background…", {}, [this] { removeBackground(); });
     auto view = menuBar()->addMenu("&View");
     buildViewMenu(view);
+    // Zooming and the like leave an open live dialog alone.
+    for (auto a : view->findChildren<QAction *>())
+        a->setProperty("keepsLiveDialog", true);
     auto language = view->addMenu("Language");
     language->setObjectName("languageMenu");
     auto languageGroup = new QActionGroup(this);

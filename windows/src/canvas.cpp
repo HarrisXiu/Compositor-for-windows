@@ -259,6 +259,43 @@ void Canvas::invalidate(const QRectF &area) {
 }
 // While one layer is edited repeatedly, each tile keeps what lies under it, so redrawing the
 // tile composites only that layer and those above.
+void Canvas::setLivePreview(std::function<void(Document &)> apply, const QRectF &dirty,
+                            const QString &editedLayer) {
+    livePreview_ = std::move(apply);
+    if (editedLayer != editedLayer_) {
+        if (editedLayer.isEmpty())
+            endLayerEdit();
+        else
+            beginLayerEdit(editedLayer);
+    }
+    if (dirty.isEmpty() || editedLayer.isEmpty())
+        forgetTiles();
+    else
+        invalidate(dirty);
+    composite_ = {};
+    update();
+}
+void Canvas::clearLivePreview() {
+    if (!livePreview_)
+        return;
+    livePreview_ = nullptr;
+    endLayerEdit();
+    forgetTiles();
+    update();
+}
+void Canvas::setInputLocked(bool locked) {
+    if (locked == inputLocked_)
+        return;
+    if (locked)
+        cancelInteraction();
+    inputLocked_ = locked;
+}
+void Canvas::setPickHandler(std::function<void(const PickEvent &)> handler) {
+    picking_ = false;
+    pickHandler_ = std::move(handler);
+    setCursor(pickHandler_ ? Qt::CrossCursor : Qt::ArrowCursor);
+    update();
+}
 void Canvas::beginLayerEdit(const QString &id) {
     editedLayer_ = id;
     backdrops_.clear();
@@ -614,6 +651,8 @@ void Canvas::paintEvent(QPaintEvent *) {
 // enlarges full size pixel for pixel. Only tiles that are on screen are rendered.
 void Canvas::drawDocument(QPainter &p, const QRectF &target) {
     Document display = *document_;
+    if (livePreview_)
+        livePreview_(display);
     if (textEditor_)
         if (auto layer = display.find(textLayerID_))
             layer->metadata["isVisible"] = false;
@@ -999,6 +1038,14 @@ void Canvas::finishSelection() {
 void Canvas::mousePressEvent(QMouseEvent *e) {
     if (e->button() != Qt::LeftButton || dragging_)
         return;
+    if (pickHandler_ && !temporaryPan_) {
+        setFocus();
+        picking_ = true;
+        pickHandler_({PickEvent::Phase::Press, toDocument(e->position()), e->modifiers()});
+        return;
+    }
+    if (inputLocked_ && !temporaryPan_ && session_->tool != Tool::Pan)
+        return;
     finishTextEditing(true);
     setFocus();
     start_ = last_ = toDocument(e->position());
@@ -1043,9 +1090,13 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
             hoverColor_ = Qt::transparent;
     }
     setCursor(temporaryPan_ || session_->tool == Tool::Pan ? Qt::OpenHandCursor
-              : brushTool() && !temporaryPicker_           ? Qt::BlankCursor
-                                                           : Qt::CrossCursor);
+              : brushTool() && !temporaryPicker_ && !pickHandler_ ? Qt::BlankCursor
+                                                                  : Qt::CrossCursor);
     update();
+    if (picking_ && pickHandler_) {
+        pickHandler_({PickEvent::Phase::Move, toDocument(e->position()), e->modifiers()});
+        return;
+    }
     if (!dragging_ && polygonPoints_.isEmpty())
         return;
     try {
@@ -1058,6 +1109,12 @@ void Canvas::mouseMoveEvent(QMouseEvent *e) {
     }
 }
 void Canvas::mouseReleaseEvent(QMouseEvent *e) {
+    if (picking_ && e->button() == Qt::LeftButton) {
+        picking_ = false;
+        if (pickHandler_)
+            pickHandler_({PickEvent::Phase::Release, toDocument(e->position()), e->modifiers()});
+        return;
+    }
     if (!dragging_ || e->button() != Qt::LeftButton)
         return;
     const auto previous = last_;

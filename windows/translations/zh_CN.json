@@ -742,5 +742,10 @@
   "Select a pixel layer and make a selection to transform": "请选择像素图层并建立选区以进行变换",
   "Floating selection is no longer available": "浮动选区已不可用",
   "Transforming selected pixels — Enter applies, Esc cancels": "正在变换选中像素——按 Enter 应用，按 Esc 取消",
-  "Transform Selected Pixels": "变换选中像素"
+  "Transform Selected Pixels": "变换选中像素",
+  "Drag to adjust. Double-click to reset.": "拖动以调整，双击恢复默认值。",
+  "Drag sideways to adjust. Shift: fine steps. Ctrl: coarse steps. Double-click to reset.": "左右拖动以调整。Shift：精细调整；Ctrl：大幅调整。双击恢复默认值。",
+  "Show the result on the canvas while adjusting.": "调整时在画布上显示结果。",
+  "Another dialog is already open": "已有其他对话框打开",
+  "The layer changed while the dialog was open": "对话框打开期间图层已改变"
 }

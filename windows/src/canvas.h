@@ -10,6 +10,7 @@
 #include <QHash>
 #include <QPainterPath>
 #include <QWidget>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -64,6 +65,33 @@ class Canvas : public QWidget {
     void cancelFloatingSelection();
     bool hasFloatingSelection() const {
         return floating_.has_value();
+    }
+    // Shows an edit that is not made yet. `apply` changes the copy of the document the canvas draws,
+    // never the document itself; `dirty` is the document area it changes (empty: everything) and
+    // `editedLayer` the one layer it changes, so redrawing composites only that layer and those above.
+    void setLivePreview(std::function<void(Document &)> apply, const QRectF &dirty = {},
+                        const QString &editedLayer = {});
+    void clearLivePreview();
+    bool hasLivePreview() const {
+        return bool(livePreview_);
+    }
+    // While a dialog that doesn't block the window edits the document, the canvas only pans and
+    // zooms, apart from what a pick handler asks for.
+    void setInputLocked(bool locked);
+    bool inputLocked() const {
+        return inputLocked_;
+    }
+    struct PickEvent {
+        enum class Phase { Press, Move, Release } phase = Phase::Press;
+        QPointF point; // On the document, in pixels.
+        Qt::KeyboardModifiers modifiers;
+    };
+    // Mouse gestures on the canvas go to the handler instead of the current tool (a locked canvas
+    // pans as ever); Escape and an empty handler end it.
+    void setPickHandler(std::function<void(const PickEvent &)> handler);
+    // How many screen pixels one document pixel takes.
+    double screenScale() const {
+        return zoom * devicePixelRatioF();
     }
     void selectAll();
     void invertSelection();
@@ -212,6 +240,9 @@ class Canvas : public QWidget {
     QString lastBrushLayer_;
     bool lastBrushMask_ = false;
     bool fitted_ = false;
+    std::function<void(Document &)> livePreview_;
+    std::function<void(const PickEvent &)> pickHandler_;
+    bool inputLocked_ = false, picking_ = false;
     struct FloatingSession {
         QString floatingId, sourceId;
     };

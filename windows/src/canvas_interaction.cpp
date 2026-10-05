@@ -284,6 +284,8 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
         if (key != Qt::Key_Space)
             return true;
     }
+    if (inputLocked_ && key != Qt::Key_Space)
+        return true;
     if (controller().keyPress(e))
         return true;
     if (key == Qt::Key_Escape) {
