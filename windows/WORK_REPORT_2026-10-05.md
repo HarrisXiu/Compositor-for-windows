@@ -98,7 +98,7 @@ IO1–IO5 交付后经过两轮验收，下面是第二轮（`775f77e`）修复�
 | **F1–F4 滤镜与调整** | **今天完成当前范围** | 见第四节的限制 |
 | **IO1–IO4** | **今天完成并经过两轮验收** | 旋转的 iPhone HEIC 实样；多写入者、大项目验收 |
 | IO5 PSD 补全 | 部分完成 | 见第四节第 6 项 |
-| AI1–AI3 | 主要完成 | 正式模型下载地址；人工抠图质量；更多硬件；NVIDIA CUDA 暂缓 |
+| AI1–AI3 | 主要完成 | 人工抠图质量；更多硬件；NVIDIA CUDA 暂缓（模型已于当天发布到 ai-models-v1） |
 | **U1 界面外观** | **未开始** | 见第四节第 1 项 |
 | **D1 安装包与系统集成** | **未开始** | 见第四节第 8 项 |
 | **D2 兼容矩阵** | **未开始** | 见第四节第 8 项 |
@@ -148,7 +148,7 @@ IO1–IO5 交付后经过两轮验收，下面是第二轮（`775f77e`）修复�
    - HEIC：缺少旋转的 iPhone 实拍样本。
    - RAW：缺少真实相机样本（CR3、NEF、ARW、RAF、手机 DNG）。
 7. **AI**
-   - 正式模型的托管地址还没有发布，下载入口仍然禁用。
+   - 模型已发布到 GitHub Release `ai-models-v1`，并完成真实下载验收（见第七节）；国内访问 GitHub 较慢时可能需要镜像。
    - 抠图质量的人工验收、更多 Intel 核显和没有 DX12 的机器。
    - NVIDIA CUDA 暂缓。
 8. **发布（D1 / D2）**
@@ -166,7 +166,7 @@ IO1–IO5 交付后经过两轮验收，下面是第二轮（`775f77e`）修复�
 
 1. **一台 Mac**（Apple silicon、macOS 26、Xcode 26）：用来编译原版并导出参考图。这是 Q1 / Q2 以及各项「Mac 对照」的共同前提，也是目前最大的阻塞。
 2. **代码签名证书**（OV / EV 或 Azure Trusted Signing）：身份审核需要 1–2 周，要提前申请。
-3. **正式模型的托管地址**：模型选型和许可已经核实，只差发布位置和最终哈希。
+3. ~~正式模型的托管地址~~：已发布到 `ai-models-v1`（见第七节）。
 4. **测试机与素材**：Win10 22H2 和 Win11 各一台；NVIDIA、AMD、Intel 核显各一种；一台高分屏；真实的 RAW、PSD 和 iPhone HEIC 样本。
 5. **版本决定**：计划中 M3 对应 0.8 测试版，目前仍为 0.4.0。建议推送并确认 CI 之后，再决定是否升版本号。版本号与项目格式无关：格式只在新增保存字段时提升，今天没有新增。
 
@@ -185,6 +185,15 @@ IO1–IO5 交付后经过两轮验收，下面是第二轮（`775f77e`）修复�
 - 主文件夹有一个只含换行符差异的 `stash@{0}`，可以用 `git stash drop` 删除。
 - 已合入、可以删除的工作树：`Compositor-s2-f1-f4`、`Compositor-io-accept`、`Compositor-accept`，以及更早的 `Compositor-ai1`、`Compositor-r2-r4` 和 Codex 的 `.codex/worktrees/*`。删除前请确认这些目录里没有其他会话正在使用的未提交内容。
 - `../Compositor-build-main` 是这次的构建目录，可以随时删除。
+
+## 七、AI 模型发布（报告完成后追加）
+
+用户确认使用 GitHub Release 托管后，以 `HarrisXiu` 账号创建了 [ai-models-v1](https://github.com/HarrisXiu/Compositor-for-windows/releases/tag/ai-models-v1)。它没有标为「最新发布」，以免被当作应用版本。
+
+- **上传内容**：5 个 FP32 ONNX 模型（共约 352 MB）和 `ai-models-v1-notices-and-validation.zip`，压缩包内是各模型的许可证、NOTICE、模型说明和 C++ 验证报告。文件取自 AI1 交付目录 `delivery-final/model-release`。上传前的本地 SHA256 和 GitHub 计算的摘要都与程序内置清单一致。
+- **代码改动**：清单中三个模型标为已发布，「AI 模型」对话框的下载和重新下载按钮随之启用，说明文字改为来自 ai-models-v1，并补了中文和日文翻译。原来的「下载按钮禁用」测试改为检查按钮已启用。`prepare_ai_delivery.py` 不再拒绝处理已发布的清单。
+- **真实下载验收**：新增可选测试 `publishedReleaseDownloadsAndResumes`（设置 `COMPOSITOR_AI_RELEASE_TEST` 后运行）。它用应用自带的下载器从发布地址下载全部 5 个文件；第一个文件下载超过 8 MiB 后取消，再从部分副本续传。每个文件安装后都重新核对大小和 SHA256。结果：本机 55 秒通过，与原有的固定地址 HTTPS 检查一起 4/4 通过；默认 18 组 CTest 仍然全部通过。
+- **限制**：每个文件只有一个下载地址。中国大陆访问 GitHub 下载域名可能很慢；如需镜像，要改成多个地址依次尝试。本次没有在其他网络或机器上测速。
 
 ## 相关文档
 

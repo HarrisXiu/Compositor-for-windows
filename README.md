@@ -46,7 +46,7 @@
 
 2026-10-05 合入 S2、F1–F4、IO1–IO5 及其两轮验收修复后，统一 **18 组测试全部通过：490 项通过、0 失败、22 项可选检查默认跳过**。当天的工作、合并过程、剩余功能和收尾条件见 [2026-10-05 工作报告](windows/WORK_REPORT_2026-10-05.md)。2026-10-04 的历史结果（13 组，386 项通过，20 项可选跳过）保留在 [统一验收报告](windows/ACCEPTANCE_REPORT_2026-10-04.md)。完整的 Mac 功能与视觉一致性仍需验收。
 
-AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI2 主体/对象选择和 AI3 背景移除/精细蒙版已接入，验证方法见 [AI2 说明](windows/AI2_README.md) 与 [AI3 说明](windows/AI3_README.md)。通过 **帮助 > AI 模型…** 导入匹配的本地模型；正式模型地址尚未发布，下载入口暂不启用。使用与支持范围见 [AI1 说明](windows/AI1_README.md)。
+AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使用 CPU；NVIDIA CUDA 留待后续。AI2 主体/对象选择和 AI3 背景移除/精细蒙版已接入，验证方法见 [AI2 说明](windows/AI2_README.md) 与 [AI3 说明](windows/AI3_README.md)。通过 **帮助 > AI 模型…** 下载模型，或导入匹配的本地文件。模型托管在本仓库的 [ai-models-v1 发布页](https://github.com/HarrisXiu/Compositor-for-windows/releases/tag/ai-models-v1)（共约 352 MB）。下载支持断点续传，大小或 SHA256 与内置清单不符的文件不会被安装。使用与支持范围见 [AI1 说明](windows/AI1_README.md)。
 
 开发计划中的功能工作包（M3）已基本具备，剩下的主要是发布阶段（M4）：
 
@@ -56,7 +56,7 @@ AI 当前 GPU 范围为**受支持的 Intel 核显 DirectML**，其他显卡使�
 - Mac 参考图与像素对比（Q1、Q2）。
 - 剩余的 Photoshop 效果与格式（IO5）。
 
-另有网格扭曲、待应用扭曲、可中断的预览和后台全分辨率应用等功能限制。这些工作需要一台 Mac、代码签名证书、正式模型地址和测试机。详细任务见 [移植进度](windows/PORTING_STATUS.md) 与 [工作报告](windows/WORK_REPORT_2026-10-05.md#四尚未完成的功能)。
+另有网格扭曲、待应用扭曲、可中断的预览和后台全分辨率应用等功能限制。这些工作需要一台 Mac、代码签名证书和测试机。详细任务见 [移植进度](windows/PORTING_STATUS.md) 与 [工作报告](windows/WORK_REPORT_2026-10-05.md#四尚未完成的功能)。
 
 ## 构建与使用
 

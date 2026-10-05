@@ -792,5 +792,6 @@
   "Updating…": "正在更新…",
   "Export": "导出",
   "Nothing to export": "没有可导出的内容",
-  "Not enough memory to export": "内存不足，无法导出"
+  "Not enough memory to export": "内存不足，无法导出",
+  "Downloads come from the project's GitHub release ai-models-v1. Matching local files can also be imported.": "模型从项目的 GitHub 发布页 ai-models-v1 下载，也可以导入与清单匹配的本地文件。"
 }

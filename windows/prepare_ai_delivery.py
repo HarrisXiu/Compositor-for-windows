@@ -1,4 +1,4 @@
-"""Prepare offline AI1 self-tests and unpublished model release materials.
+"""Prepare offline AI1 self-tests and model release materials.
 
 Only the Python standard library is needed. This script never contacts a server.
 """
@@ -57,8 +57,7 @@ def main():
     subprocess.run([str(probe.resolve()), "--catalog", str((release / "catalog.json").resolve())], check=True)
     subprocess.run([str(probe.resolve()), "--write-model-licenses", str((release / "notices").resolve())], check=True)
     catalog = json.loads((release / "catalog.json").read_text(encoding="utf-8"))
-    if any(model["published"] for model in catalog["models"]):
-        raise ValueError("This preparation flow is for unpublished model releases")
+    published = all(model["published"] for model in catalog["models"])
     records = {model["id"]: model for model in references["models"]}
     definitions = {model["id"]: model for model in catalog["models"]}
     for identifier, model in definitions.items():
@@ -93,9 +92,12 @@ def main():
     if args.verification and covered != set(definitions):
         raise ValueError("Verification reports do not cover every catalog model")
     (release / "RELEASE-NOTES.md").write_text(
-        "# AI1 model release staging (unpublished)\n\n"
-        "No remote release or upload was created. All URLs in catalog.json remain inactive "
-        "until a separately authorized publication; published=false keeps downloads disabled.\n\n"
+        ("# AI1 model release ai-models-v1\n\n"
+         "These files are published on the project's GitHub release ai-models-v1; catalog.json lists their "
+         "download URLs, sizes and SHA256 hashes.\n\n" if published else
+         "# AI1 model release staging (unpublished)\n\n"
+         "No remote release or upload was created. All URLs in catalog.json remain inactive "
+         "until a separately authorized publication; published=false keeps downloads disabled.\n\n") +
         "Assets are FP32 ONNX. BiRefNet Lite uses export-only GridSample/MatMul lowering. "
         "SAM 2 has one incorrect nested branch shape annotation removed; computation and weights are unchanged. "
         "Encoder/decoder pairs support image feature reuse, point prompts and iterative refinement. "
@@ -164,7 +166,7 @@ def main():
             if path.is_file():
                 output.write(path, path.relative_to(args.output).as_posix())
     (args.output / "DELIVERY-INFO.json").write_text(json.dumps({
-        "utc": datetime.now(timezone.utc).isoformat(), "model_release_published": False,
+        "utc": datetime.now(timezone.utc).isoformat(), "model_release_published": published,
         "bundle": archive.name, "bundle_bytes": archive.stat().st_size, "bundle_sha256": sha256(archive),
         "model_ids": [model["id"] for model in manifest["models"]],
     }, indent=2) + "\n", encoding="utf-8")

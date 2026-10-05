@@ -136,6 +136,46 @@ class ModelTests : public QObject {
         QCOMPARE(done.size(), 1);
         QVERIFY(verifyAiAsset(aiModelPath(model, model.assets.first(), dir.path()), model.assets.first()));
     }
+    void publishedReleaseDownloadsAndResumes() {
+        // Downloads every catalog file (about 350 MB) from the published GitHub release.
+        if (!qEnvironmentVariableIsSet("COMPOSITOR_AI_RELEASE_TEST"))
+            QSKIP("Optional live check of the published model release.");
+        QTemporaryDir dir;
+        AiModelDownloader downloader(dir.path());
+        QSignalSpy done(&downloader, &AiModelDownloader::finished), errors(&downloader, &AiModelDownloader::failed),
+            cancelled(&downloader, &AiModelDownloader::cancelled);
+        bool interrupted = false;
+        // Queued, like a Cancel click arriving from the event loop.
+        connect(&downloader, &AiModelDownloader::progress, &downloader, [&](qint64 received, qint64) {
+            if (!interrupted && received > 8 * 1024 * 1024) {
+                interrupted = true;
+                downloader.cancel();
+            }
+        }, Qt::QueuedConnection);
+        for (const auto &model : aiModelCatalog()) {
+            QVERIFY(model.published);
+            for (int index = 0; index < model.assets.size(); ++index) {
+                const auto &asset = model.assets[index];
+                const auto path = aiModelPath(model, asset, dir.path());
+                const bool resume = !interrupted;
+                done.clear();
+                downloader.start(model, index);
+                if (resume) {
+                    // The first file is canceled part way, then resumed from its partial copy.
+                    QTRY_VERIFY_WITH_TIMEOUT(!cancelled.isEmpty() || !errors.isEmpty(), 600000);
+                    QVERIFY2(errors.isEmpty(), errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
+                    const auto partial = QFileInfo(path + ".part").size();
+                    QVERIFY(partial > 8 * 1024 * 1024 && partial < asset.size);
+                    downloader.start(model, index);
+                }
+                QTRY_VERIFY_WITH_TIMEOUT(!done.isEmpty() || !errors.isEmpty(), 1800000);
+                QVERIFY2(errors.isEmpty(), errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
+                QVERIFY(verifyAiAsset(path, asset));
+                QVERIFY(!QFileInfo::exists(path + ".part"));
+            }
+        }
+        QVERIFY(interrupted);
+    }
     void completeDownloadAndOfflineIntegrity() {
         QTemporaryDir dir;
         Network network;
@@ -316,10 +356,11 @@ class ModelTests : public QObject {
         QTemporaryDir dir;
         AiModelsDialog dialog(nullptr, dir.path());
         for (const auto &model : aiModelCatalog()) {
-            QVERIFY(!model.published);
+            // The ai-models-v1 release is published: downloads are offered beside local import.
+            QVERIFY(model.published);
             const auto download = dialog.findChild<QPushButton *>("download_" + model.id);
             const auto import = dialog.findChild<QPushButton *>("import_" + model.id);
-            QVERIFY(download && !download->isEnabled());
+            QVERIFY(download && download->isEnabled());
             QVERIFY(import && import->isEnabled());
         }
         const auto screenshot = qEnvironmentVariable("COMPOSITOR_AI_DIALOG_SCREENSHOT");

@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
+#include <algorithm>
 
 namespace compositor {
 AiModelsDialog::AiModelsDialog(QWidget *parent, QString root)
@@ -23,7 +24,11 @@ AiModelsDialog::AiModelsDialog(QWidget *parent, QString root)
     auto explanation = new QLabel("Models run locally. Downloads are optional and SHA256 verified; installed models remain available offline.");
     explanation->setWordWrap(true);
     layout->addWidget(explanation);
-    auto publication = new QLabel("The model release has not been published yet. Import matching local files; unpublished download URLs are not requested.");
+    const auto &models = aiModelCatalog();
+    const bool published = std::all_of(models.begin(), models.end(), [](const auto &model) { return model.published; });
+    auto publication = new QLabel(
+        published ? "Downloads come from the project's GitHub release ai-models-v1. Matching local files can also be imported."
+                  : "The model release has not been published yet. Import matching local files; unpublished download URLs are not requested.");
     publication->setWordWrap(true);
     layout->addWidget(publication);
     auto cache = new QLabel(root_);

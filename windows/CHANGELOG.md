@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 2026-10-05 — AI model downloads, version remains 0.4.0
+
+- Published the five FP32 ONNX models (BiRefNet Lite, SAM 2 Hiera Tiny and MobileSAM) with their licenses and validation reports on the [`ai-models-v1` GitHub release](https://github.com/HarrisXiu/Compositor-for-windows/releases/tag/ai-models-v1).
+- **Help > AI Models…** now offers Download and Restart beside local import. Files are size/SHA256 verified before installation and resume after an interruption.
+- Added an opt-in live check (`COMPOSITOR_AI_RELEASE_TEST`) that downloads every catalog file from the release, resumes an interrupted one and verifies them; it passed locally.
+
 ### 2026-10-05 — integration, version remains 0.4.0
 
 - Merged the second IO acceptance fixes and S2/F1–F4 into `the-one-for-windows`. External project reloads now also wait while a filter dialog is previewing on the canvas.

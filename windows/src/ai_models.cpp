@@ -29,12 +29,12 @@ void safeName(const AiModelDefinition &model, const AiModelAsset &file) {
 }
 const QList<AiModelDefinition> &aiModelCatalog() {
     static const QList<AiModelDefinition> catalog{
-        {"birefnet-lite", "BiRefNet Lite (FP32)", "MIT", "ZhengPeng7/BiRefNet_lite@aa62cd87eafb9cc43056d08ef3615a14628b831d", false,
+        {"birefnet-lite", "BiRefNet Lite (FP32)", "MIT", "ZhengPeng7/BiRefNet_lite@aa62cd87eafb9cc43056d08ef3615a14628b831d", true,
          {asset("birefnet-lite.onnx", 181695409, "e40167bbaf9b3bb0cf64ebd700dff1b9431da6161ccaee9062a95fc5b16270d7")}},
-        {"sam2", "SAM 2 Hiera Tiny (FP32)", "Apache-2.0", "facebook/sam2-hiera-tiny@7c218beaf0bb87874785f32b582f640134fc1c09", false,
+        {"sam2", "SAM 2 Hiera Tiny (FP32)", "Apache-2.0", "facebook/sam2-hiera-tiny@7c218beaf0bb87874785f32b582f640134fc1c09", true,
          {asset("sam2_encoder.onnx", 109471958, "461ce21868f57db114211d09d2c853bc02e7e9a3034cdab71d00a81d3a0767a5"),
           asset("sam2_decoder.onnx", 16564159, "0f57537980e2c077e34b820919ef999e9449709dac17a6cd11e212c0a8fec000")}},
-        {"mobilesam", "MobileSAM (FP32)", "Apache-2.0", "ChaoningZhang/MobileSAM@f706ad9c4eb7f219c00d9050e46328518ffb65d2", false,
+        {"mobilesam", "MobileSAM (FP32)", "Apache-2.0", "ChaoningZhang/MobileSAM@f706ad9c4eb7f219c00d9050e46328518ffb65d2", true,
          {asset("mobilesam_encoder.onnx", 27969729, "c92cd14ef8c41e9b793c7b54c1beb106732ced449039dd19badbf99c8d0bab72"),
           asset("mobilesam_decoder.onnx", 16496929, "8f269b4e837d13e69d50d4104107cb4f9c7406a48571eb40e112f10eb722da2d")}}
     };
