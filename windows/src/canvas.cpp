@@ -286,6 +286,8 @@ void Canvas::fit() {
     refresh();
 }
 void Canvas::setTool(Tool value) {
+    if (floating_ && value != Tool::Move)
+        commitFloatingSelection();
     if (value != session_->tool) {
         finishTextEditing(true);
         cancelInteraction();
@@ -354,6 +356,12 @@ void Canvas::cancelInteraction() {
         return;
     dragging_ = false;
     guideDrag_ = -1;
+    if (selectionDrag_ == SelectionDrag::Outline)
+        session_->selection = priorSelection_;
+    selectionDrag_ = SelectionDrag::None;
+    dragOffset_ = {};
+    if (floating_)
+        restoreGesture();
     endTransform();
     if (session_->tool == Tool::Crop && !temporaryPan_)
         session_->cropFrame = session_->cropBeforeGesture;
@@ -369,13 +377,15 @@ void Canvas::cancelInteraction() {
     }
     cloneSample_ = {};
     endLayerEdit();
-    emit editCanceled();
+    if (!floating_)
+        emit editCanceled();
     update();
 }
 void Canvas::replaceSelection(const QImage &mask, const QString &label) {
     require(mask.isNull() ||
                 (mask.size() == document_->size() && mask.format() == QImage::Format_Grayscale8),
             "Selection must match the canvas size");
+    commitFloatingSelection();
     if (mask == session_->selection)
         return;
     auto before = session_->selection;
@@ -400,10 +410,12 @@ void Canvas::setAiPoints(const QVector<QPointF> &points, const QVector<int> &lab
     update();
 }
 void Canvas::clearSelection() {
+    commitFloatingSelection();
     cancelInteraction();
     replaceSelection({}, "Deselect");
 }
 void Canvas::selectAll() {
+    commitFloatingSelection();
     cancelInteraction();
     QImage next(document_->size(), QImage::Format_Grayscale8);
     if (next.isNull()) {
@@ -414,6 +426,7 @@ void Canvas::selectAll() {
     replaceSelection(next, "Select All");
 }
 void Canvas::invertSelection() {
+    commitFloatingSelection();
     cancelInteraction();
     if (session_->selection.isNull()) {
         selectAll();
@@ -429,6 +442,7 @@ void Canvas::invertSelection() {
     replaceSelection(next, "Inverse Selection");
 }
 void Canvas::featherSelection(double radius) {
+    commitFloatingSelection();
     cancelInteraction();
     if (session_->selection.isNull())
         return;
@@ -437,6 +451,7 @@ void Canvas::featherSelection(double radius) {
                      "Feather Selection");
 }
 void Canvas::resizeSelection(int radius, bool expand) {
+    commitFloatingSelection();
     cancelInteraction();
     if (session_->selection.isNull())
         return;
@@ -462,10 +477,68 @@ QRect Canvas::selectionBounds() const {
 QImage Canvas::selectionForLayer(const Layer &layer) const {
     return layerSelection(*document_, layer, session_->selection);
 }
+namespace {
+// The edges between selected (at least half) and unselected pixels of `mask`, in its pixel
+// coordinates. A very large mask is traced at reduced size.
+QPainterPath boundaryPath(const QImage &source) {
+    QPainterPath outline;
+    auto mask = source;
+    double scale = 1;
+    if (std::max(mask.width(), mask.height()) > 2048) {
+        mask = mask.scaled(2048, 2048, Qt::KeepAspectRatio, Qt::FastTransformation);
+        scale = double(source.width()) / mask.width();
+    }
+    auto selected = [&](int x, int y) {
+        return mask.valid(x, y) && mask.constScanLine(y)[x] >= 128;
+    };
+    auto edge = [&](QPointF a, QPointF b) {
+        outline.moveTo(a * scale);
+        outline.lineTo(b * scale);
+    };
+    auto runs = [&](int length, auto boundary, auto coordinate) {
+        int start = -1;
+        for (int i = 0; i <= length; ++i) {
+            const bool inside = i < length && boundary(i);
+            if (inside && start < 0)
+                start = i;
+            if (!inside && start >= 0) {
+                edge(coordinate(start), coordinate(i));
+                start = -1;
+            }
+        }
+    };
+    for (int y = 0; y < mask.height(); ++y) {
+        runs(
+            mask.width(), [&](int x) { return selected(x, y) && !selected(x, y - 1); },
+            [&](int x) { return QPointF(x, y); });
+        runs(
+            mask.width(), [&](int x) { return selected(x, y) && !selected(x, y + 1); },
+            [&](int x) { return QPointF(x, y + 1); });
+    }
+    for (int x = 0; x < mask.width(); ++x) {
+        runs(
+            mask.height(), [&](int y) { return selected(x, y) && !selected(x - 1, y); },
+            [&](int y) { return QPointF(x, y); });
+        runs(
+            mask.height(), [&](int y) { return selected(x, y) && !selected(x + 1, y); },
+            [&](int y) { return QPointF(x + 1, y); });
+    }
+    return outline;
+}
+} // namespace
 void Canvas::paintEvent(QPaintEvent *) {
     syncTextEditor();
     QPainter p(this);
     p.fillRect(rect(), QColor(29, 31, 36));
+    auto drawAnts = [&](QPainter &painter, const QPainterPath &outline) {
+        painter.setPen(QPen(Qt::black, 1));
+        painter.drawPath(outline);
+        QPen ants(Qt::white, 1, Qt::CustomDashLine);
+        ants.setDashPattern({4, 4});
+        ants.setDashOffset(antsPhase_);
+        painter.setPen(ants);
+        painter.drawPath(outline);
+    };
     auto r = canvasRect();
     p.save();
     p.setClipRect(r);
@@ -493,64 +566,32 @@ void Canvas::paintEvent(QPaintEvent *) {
     p.restore();
     p.setPen(QColor(5, 6, 8));
     p.drawRect(r);
-    if (!session_->selection.isNull()) {
+    // While a selection floats, its outline is the floating layer's mask, wherever that now lies.
+    const Layer *floatingLayer = floating_ ? document_->find(floating_->floatingId) : nullptr;
+    if (floatingLayer && !floatingLayer->mask.isNull()) {
+        if (floatingLayer->mask.cacheKey() != floatingOutlineKey_) {
+            floatingOutlineKey_ = floatingLayer->mask.cacheKey();
+            floatingOutline_ = boundaryPath(floatingLayer->mask);
+        }
+        Layer maskLayer = *floatingLayer;
+        if (floatingLayer->metadata.value("maskPlacement").isObject())
+            maskLayer.metadata["transform"] = floatingLayer->metadata.value("maskPlacement");
+        QTransform map = maskLayer.placement(floatingLayer->mask.size());
+        map *= QTransform().translate(r.left(), r.top()).scale(zoom, zoom);
+        drawAnts(p, map.map(floatingOutline_));
+    } else if (!session_->selection.isNull()) {
         if (session_->selection.cacheKey() != selectionOutlineKey_) {
             selectionOutlineKey_ = session_->selection.cacheKey();
-            selectionOutline_ = QPainterPath();
-            auto mask = session_->selection;
-            double scale = 1;
-            if (std::max(mask.width(), mask.height()) > 2048) {
-                mask = mask.scaled(2048, 2048, Qt::KeepAspectRatio, Qt::FastTransformation);
-                scale = double(session_->selection.width()) / mask.width();
-            }
-            auto selected = [&](int x, int y) {
-                return mask.valid(x, y) && mask.constScanLine(y)[x] >= 128;
-            };
-            auto edge = [&](QPointF a, QPointF b) {
-                selectionOutline_.moveTo(a * scale);
-                selectionOutline_.lineTo(b * scale);
-            };
-            auto runs = [&](int length, auto boundary, auto coordinate) {
-                int start = -1;
-                for (int i = 0; i <= length; ++i) {
-                    const bool inside = i < length && boundary(i);
-                    if (inside && start < 0)
-                        start = i;
-                    if (!inside && start >= 0) {
-                        edge(coordinate(start), coordinate(i));
-                        start = -1;
-                    }
-                }
-            };
-            for (int y = 0; y < mask.height(); ++y) {
-                runs(
-                    mask.width(), [&](int x) { return selected(x, y) && !selected(x, y - 1); },
-                    [&](int x) { return QPointF(x, y); });
-                runs(
-                    mask.width(), [&](int x) { return selected(x, y) && !selected(x, y + 1); },
-                    [&](int x) { return QPointF(x, y + 1); });
-            }
-            for (int x = 0; x < mask.width(); ++x) {
-                runs(
-                    mask.height(), [&](int y) { return selected(x, y) && !selected(x - 1, y); },
-                    [&](int y) { return QPointF(x, y); });
-                runs(
-                    mask.height(), [&](int y) { return selected(x, y) && !selected(x + 1, y); },
-                    [&](int y) { return QPointF(x + 1, y); });
-            }
+            selectionOutline_ = boundaryPath(session_->selection);
         }
         if (!selectionOutline_.isEmpty()) {
             QTransform map;
             map.translate(r.left(), r.top());
             map.scale(zoom, zoom);
-            auto outline = map.map(selectionOutline_);
-            p.setPen(QPen(Qt::black, 1));
-            p.drawPath(outline);
-            QPen ants(Qt::white, 1, Qt::CustomDashLine);
-            ants.setDashPattern({4, 4});
-            ants.setDashOffset(antsPhase_);
-            p.setPen(ants);
-            p.drawPath(outline);
+            // Dragging a selection's pixels carries its outline along.
+            if (selectionDrag_ == SelectionDrag::Pixels)
+                map.translate(dragOffset_.x(), dragOffset_.y());
+            drawAnts(p, map.map(selectionOutline_));
         }
     }
     if (aiPicking_) {

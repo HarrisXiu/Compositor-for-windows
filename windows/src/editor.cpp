@@ -200,6 +200,7 @@ void EditorWindow::save(bool saveAs) {
             path += ".comp";
     }
     p->canvas->finishTextEditing(true);
+    p->canvas->commitFloatingSelection();
     p->canvas->cancelInteraction();
     auto snapshot = p->document;
     const auto contentState = p->contentState;
@@ -306,6 +307,7 @@ bool EditorWindow::canClose(EditorPage *p) {
     if (!p)
         return true;
     p->canvas->finishTextEditing(true);
+    p->canvas->commitFloatingSelection();
     if (p->saving) {
         showError("Wait for the background save to finish");
         return false;

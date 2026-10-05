@@ -734,5 +734,13 @@
   "Calculating background mask…": "背景マスクを計算中…",
   "Background preview ready.": "背景プレビューの準備ができました。",
   "Applying full-resolution background mask…": "フル解像度の背景マスクを適用中…",
-  "No foreground subject was detected in this layer. Try an image with a more distinct subject.": "このレイヤーで前景の被写体が検出されませんでした。より明確な被写体の画像を試してください。"
+  "No foreground subject was detected in this layer. Try an image with a more distinct subject.": "このレイヤーで前景の被写体が検出されませんでした。より明確な被写体の画像を試してください。",
+  "Duplicate Selected Pixels": "選択したピクセルを複製",
+  "Transform Selection": "選択範囲を変形",
+  "Select a pixel layer to move its selected pixels": "選択したピクセルを移動するにはピクセルレイヤーを選択してください",
+  "The selection covers no pixels of this layer": "選択範囲がこのレイヤーのピクセルに掛かっていません",
+  "Select a pixel layer and make a selection to transform": "変形するにはピクセルレイヤーを選択し、選択範囲を作成してください",
+  "Floating selection is no longer available": "フローティング選択範囲は利用できなくなりました",
+  "Transforming selected pixels — Enter applies, Esc cancels": "選択したピクセルを変形中 — Enter で適用、Esc でキャンセル",
+  "Transform Selected Pixels": "選択したピクセルを変形"
 }

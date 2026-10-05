@@ -155,6 +155,7 @@ void EditorPage::record(const QString &label, const Document &before, const Docu
 }
 void EditorPage::edit(const QString &label, const std::function<void(Document &)> &operation) {
     canvas->finishTextEditing(true);
+    canvas->commitFloatingSelection();
     emit editWillStart();
     canvas->cancelInteraction();
     auto before = document;

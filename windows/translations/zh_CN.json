@@ -734,5 +734,13 @@
   "Calculating background mask…": "正在计算背景蒙版…",
   "Background preview ready.": "背景预览已就绪。",
   "Applying full-resolution background mask…": "正在应用完整分辨率的背景蒙版…",
-  "No foreground subject was detected in this layer. Try an image with a more distinct subject.": "此图层中未检测到前景主体，请尝试主体更清晰的图像。"
+  "No foreground subject was detected in this layer. Try an image with a more distinct subject.": "此图层中未检测到前景主体，请尝试主体更清晰的图像。",
+  "Duplicate Selected Pixels": "复制选中像素",
+  "Transform Selection": "变换选区",
+  "Select a pixel layer to move its selected pixels": "请选择像素图层以移动其选中像素",
+  "The selection covers no pixels of this layer": "选区未覆盖此图层的任何像素",
+  "Select a pixel layer and make a selection to transform": "请选择像素图层并建立选区以进行变换",
+  "Floating selection is no longer available": "浮动选区已不可用",
+  "Transforming selected pixels — Enter applies, Esc cancels": "正在变换选中像素——按 Enter 应用，按 Esc 取消",
+  "Transform Selected Pixels": "变换选中像素"
 }

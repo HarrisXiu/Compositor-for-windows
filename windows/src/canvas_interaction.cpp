@@ -5,6 +5,7 @@
 #include "distort.h"
 #include "layer_operations.h"
 #include "render.h"
+#include "selection_float.h"
 #include "shortcuts.h"
 #include <QEvent>
 #include <QJsonArray>
@@ -116,6 +117,7 @@ void Canvas::cycleToolMode() {
 void Canvas::addGuide(bool horizontal, double position) {
     if (session_->view.lockGuides || !std::isfinite(position))
         return;
+    commitFloatingSelection();
     cancelInteraction();
     emit editStarted();
     auto guides = document_->metadata.value("guides").toArray();
@@ -128,6 +130,7 @@ void Canvas::addGuide(bool horizontal, double position) {
 void Canvas::clearGuides() {
     if (session_->view.lockGuides || document_->metadata.value("guides").toArray().isEmpty())
         return;
+    commitFloatingSelection();
     cancelInteraction();
     emit editStarted();
     document_->metadata["guides"] = QJsonArray();
@@ -176,6 +179,27 @@ void Canvas::nudge(QPointF delta, bool pixels) {
     auto l = document_->active();
     if (!l)
         return;
+    if (pixels && !paintMask()) {
+        if (floating_ || session_->selection.isNull() || l->group() || l->image.isNull())
+            return;
+        // The pixels float on a layer of their own, which merges back and grows the layer, so
+        // nothing is cut off at the edge.
+        emit editStarted();
+        const auto sourceId = l->id();
+        const auto id = liftSelection(*document_, sourceId, session_->selection, false);
+        if (id.isEmpty()) {
+            emit editCanceled();
+            return;
+        }
+        document_->find(id)->move(delta);
+        mergeFloatingLayer(*document_, id, sourceId);
+        session_->selection =
+            shiftSelection(session_->selection, QPoint(int(delta.x()), int(delta.y())));
+        emit editFinished("Move Selected Pixels");
+        emit selectionChanged();
+        refresh();
+        return;
+    }
     if (pixels) {
         if (session_->selection.isNull() || l->group())
             return;
@@ -224,7 +248,7 @@ void Canvas::nudge(QPointF delta, bool pixels) {
     }
     if (session_->tool != Tool::Move)
         return;
-    emit editStarted();
+    startEdit();
     l = document_->active();
     if (paintMask() && !l->mask.isNull()) {
         auto m = l->metadata.value("maskPlacement").toObject();
@@ -241,7 +265,7 @@ void Canvas::nudge(QPointF delta, bool pixels) {
             if (ids.contains(layer.id()))
                 layer.move(delta);
     }
-    emit editFinished("Nudge Layer");
+    finishEdit("Nudge Layer");
     refresh();
 }
 bool Canvas::handleCanvasKey(QKeyEvent *input) {
@@ -263,12 +287,20 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
     if (controller().keyPress(e))
         return true;
     if (key == Qt::Key_Escape) {
+        if (floating_ && !dragging_) {
+            cancelFloatingSelection();
+            return true;
+        }
         controller().cancel();
         guideDrag_ = -1;
         transformHandle_ = -1;
         return true;
     }
     if ((key == Qt::Key_Return || key == Qt::Key_Enter) && mods == Qt::NoModifier) {
+        if (floating_ && !dragging_) {
+            commitFloatingSelection();
+            return true;
+        }
         if (dragging_) {
             QMouseEvent release(QEvent::MouseButtonRelease, hover_, mapToGlobal(hover_),
                                 Qt::LeftButton, Qt::NoButton, mods);
@@ -335,7 +367,7 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
         update();
         return true;
     }
-    if (key >= Qt::Key_0 && key <= Qt::Key_9 && mods == Qt::NoModifier) {
+    if (key >= Qt::Key_0 && key <= Qt::Key_9 && mods == Qt::NoModifier && !floating_) {
         int digit = key - Qt::Key_0, percent = digit == 0 ? 100 : digit * 10;
         if (opacityDigit_ >= 0 && opacityClock_.isValid() && opacityClock_.elapsed() < 650) {
             percent = opacityDigit_ * 10 + digit;
@@ -356,7 +388,7 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
         return true;
     }
     if ((key == Qt::Key_Minus || key == Qt::Key_Equal || key == Qt::Key_Plus) &&
-        mods == Qt::ShiftModifier) {
+        mods == Qt::ShiftModifier && !floating_) {
         if (auto l = document_->active()) {
             auto modes = blendModes();
             int i = std::max(0, int(modes.indexOf(l->blend())));
@@ -400,7 +432,7 @@ bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     bool fromHorizontal =
         session_->view.rulers && e->position().y() < 24 && e->position().x() >= 24;
     bool fromVertical = session_->view.rulers && e->position().x() < 24 && e->position().y() >= 24;
-    if (!session_->view.lockGuides && session_->view.guides) {
+    if (!floating_ && !session_->view.lockGuides && session_->view.guides) {
         int index = -1;
         if (fromHorizontal || fromVertical) {
             index = guides.size();
@@ -429,6 +461,8 @@ bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     }
     if (session_->view.rulers && (e->position().x() < 24 || e->position().y() < 24))
         return true;
+    if (beginSelectionDrag(e))
+        return true;
     if (session_->tool == Tool::Move && session_->view.transformControls) {
         const auto subject = transformSubject();
         if (subject.kind != TransformSubject::Kind::None) {
@@ -448,6 +482,10 @@ bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     return false;
 }
 bool Canvas::moveOverlayEdit(QMouseEvent *e) {
+    if (selectionDrag_ != SelectionDrag::None) {
+        updateSelectionDrag(e);
+        return true;
+    }
     if (guideDrag_ >= 0) {
         auto guides = document_->metadata["guides"].toArray();
         if (guideDrag_ >= guides.size())
@@ -484,6 +522,11 @@ bool Canvas::moveOverlayEdit(QMouseEvent *e) {
     return true;
 }
 bool Canvas::finishOverlayEdit(QMouseEvent *e) {
+    if (selectionDrag_ != SelectionDrag::None) {
+        updateSelectionDrag(e);
+        finishSelectionDrag(e);
+        return true;
+    }
     if (guideDrag_ >= 0) {
         moveOverlayEdit(e);
         auto guides = document_->metadata["guides"].toArray();
@@ -509,8 +552,10 @@ bool Canvas::finishOverlayEdit(QMouseEvent *e) {
             updateDistort(toDocument(e->position()), e->modifiers());
             // A handle let go where it was grabbed distorts nothing.
             if (distortCorners_ == distortStart_) {
+                restoreGesture();
                 endTransform();
-                emit editCanceled();
+                if (!floating_)
+                    emit editCanceled();
                 return true;
             }
             applyDistortion(0);
@@ -519,7 +564,7 @@ bool Canvas::finishOverlayEdit(QMouseEvent *e) {
         } else
             moveOverlayEdit(e);
         endTransform();
-        emit editFinished(label);
+        finishEdit(label);
         return true;
     }
     return false;

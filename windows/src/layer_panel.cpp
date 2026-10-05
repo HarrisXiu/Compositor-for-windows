@@ -146,8 +146,10 @@ void EditorWindow::buildPanels() {
     layout->addWidget(opacity_);
     auto layerTree = new LayerTree;
     layerTree->finishText = [this] {
-        if (auto p = page())
+        if (auto p = page()) {
             p->canvas->finishTextEditing(true);
+            p->canvas->commitFloatingSelection();
+        }
     };
     layerTree->relocated = [this](const QSet<QString> &ids, const QString &parent,
                                   const QString &anchor, bool above) {
@@ -291,6 +293,9 @@ void EditorWindow::buildPanels() {
             return;
         const auto id = item->data(0, Qt::UserRole).toString();
         page()->canvas->finishTextEditing(true);
+        // Choosing another layer in the panel ends a transform of selected pixels.
+        if (id != page()->document.activeId())
+            page()->canvas->commitFloatingSelection();
         page()->canvas->cancelInteraction();
         page()->document.metadata["activeLayerID"] = id;
         if (auto layer = page()->document.active(); !layer || layer->mask.isNull())
@@ -303,8 +308,10 @@ void EditorWindow::buildPanels() {
         QSet<QString> ids;
         for (auto item : layers_->selectedItems())
             ids.insert(item->data(0, Qt::UserRole).toString());
-        if (ids != page()->session.selectedLayerIDs)
+        if (ids != page()->session.selectedLayerIDs) {
             page()->canvas->finishTextEditing(true);
+            page()->canvas->commitFloatingSelection();
+        }
         page()->session.selectedLayerIDs = ids;
         if (!ids.contains(page()->document.activeId()))
             page()->document.metadata["activeLayerID"] = ids.isEmpty() ? QString() : *ids.begin();

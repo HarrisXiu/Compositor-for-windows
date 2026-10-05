@@ -11,6 +11,7 @@
 #include <QPainterPath>
 #include <QWidget>
 #include <memory>
+#include <optional>
 
 namespace compositor {
 struct RenderBatch;
@@ -54,6 +55,16 @@ class Canvas : public QWidget {
     void waitForRendering();
     void fit();
     void clearSelection();
+    // Ctrl+T with a selection: the selected pixels float on a layer of their own, edited with the
+    // transform handles; Enter merges them back, Escape restores the document exactly. The whole
+    // thing is one undo step.
+    bool canTransformSelection() const;
+    void beginSelectionTransform();
+    void commitFloatingSelection();
+    void cancelFloatingSelection();
+    bool hasFloatingSelection() const {
+        return floating_.has_value();
+    }
     void selectAll();
     void invertSelection();
     void replaceSelection(const QImage &mask, const QString &label);
@@ -201,6 +212,29 @@ class Canvas : public QWidget {
     QString lastBrushLayer_;
     bool lastBrushMask_ = false;
     bool fitted_ = false;
+    struct FloatingSession {
+        QString floatingId, sourceId;
+    };
+    std::optional<FloatingSession> floating_;
+    QPainterPath floatingOutline_;
+    qint64 floatingOutlineKey_ = 0;
+    // Dragging inside a selection: its outline alone, or its pixels with it (a floating layer
+    // that merges back on release).
+    enum class SelectionDrag { None, Outline, Pixels };
+    SelectionDrag selectionDrag_ = SelectionDrag::None;
+    QJsonObject dragOrigin_;
+    QString dragFloatingId_, dragSourceId_;
+    QPoint dragOffset_;
+    bool dragDuplicate_ = false;
+    bool beginSelectionDrag(QMouseEvent *event);
+    void updateSelectionDrag(QMouseEvent *event);
+    void finishSelectionDrag(QMouseEvent *event);
+    void moveSelectedPixels(QPoint offset);
+    // Edits that end a gesture report to the page, unless a floating selection is pending: its
+    // gestures all belong to the one undo step that ends with merging it.
+    void startEdit();
+    void finishEdit(const QString &label);
+    void restoreGesture();
     QRectF canvasRect() const;
     QPointF toDocument(QPointF point) const;
     void dab(QPointF point);

@@ -63,9 +63,14 @@ void EditorWindow::buildMenus() {
     });
     action(file, "Exit", QKeySequence("Alt+F4"), [this] { close(); });
     auto edit = menuBar()->addMenu("&Edit");
+    // Undo and Redo during a transform of selected pixels abandon it, as Escape does.
     action(edit, "Undo", QKeySequence::Undo, [this] {
         if (page()) {
             page()->canvas->finishTextEditing(true);
+            if (page()->canvas->hasFloatingSelection()) {
+                page()->canvas->cancelFloatingSelection();
+                return;
+            }
             page()->canvas->cancelInteraction();
             page()->history.undo();
         }
@@ -73,6 +78,10 @@ void EditorWindow::buildMenus() {
     action(edit, "Redo", QKeySequence::Redo, [this] {
         if (page()) {
             page()->canvas->finishTextEditing(true);
+            if (page()->canvas->hasFloatingSelection()) {
+                page()->canvas->cancelFloatingSelection();
+                return;
+            }
             page()->canvas->cancelInteraction();
             page()->history.redo();
         }
@@ -145,12 +154,23 @@ void EditorWindow::buildMenus() {
     });
     action(layer, "Edit Text…", {}, [this] { editText(); });
     action(layer, "Edit Shape…", {}, [this] { editShape(); });
-    action(layer, "Transform Layer", QKeySequence("Ctrl+T"), [this] {
+    // With a selection, Ctrl+T transforms the selected pixels, floating them until Enter.
+    auto transformCommand = [this](bool selectionOnly) {
+        if (selectionOnly)
+            require(page() && page()->canvas->canTransformSelection(),
+                    "Select a pixel layer and make a selection to transform");
         setTool(Tool::Move);
         for (auto a : findChildren<QAction *>())
             if (a->property("layerAction").toString() == "Show Transform Controls")
                 a->setChecked(true);
-    });
+        if (page() && page()->canvas->canTransformSelection()) {
+            page()->canvas->beginSelectionTransform();
+            statusBar()->showMessage(
+                uiText("Transforming selected pixels — Enter applies, Esc cancels"));
+        }
+    };
+    action(layer, "Transform Layer", QKeySequence("Ctrl+T"),
+           [transformCommand] { transformCommand(false); });
     auto adjustments = layer->addMenu("New Adjustment Layer");
     for (const auto &kind : QStringList{
              "Hue/Saturation", "Levels", "Curves", "Exposure", "Gradient Map", "Grain", "Invert",
@@ -286,6 +306,7 @@ void EditorWindow::buildMenus() {
         if (page())
             page()->canvas->invertSelection();
     });
+    action(select, "Transform Selected Pixels", {}, [transformCommand] { transformCommand(true); });
     action(select, "Feather…", {}, [this] {
         if (!page() || page()->canvas->session().selection.isNull())
             return;

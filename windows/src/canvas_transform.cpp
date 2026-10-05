@@ -89,7 +89,7 @@ QVector<QPointF> Canvas::handlePoints(const QVector<QPointF> &c, bool rotation) 
     return points;
 }
 void Canvas::beginTransform(const TransformSubject &subject, int handle, bool distort) {
-    emit editStarted();
+    startEdit();
     transformSubject_ = subject;
     transformOriginals_.clear();
     for (const auto &id : subject.ids)
@@ -369,6 +369,6 @@ void Canvas::finishMove() {
     const QString label = duplicating_ ? (several ? "Duplicate Layers" : "Duplicate Layer")
                                        : (several ? "Move Layers" : "Move Layer");
     endTransform();
-    emit editFinished(label);
+    finishEdit(label);
 }
 } // namespace compositor
