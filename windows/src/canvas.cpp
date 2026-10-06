@@ -325,6 +325,8 @@ void Canvas::fit() {
 void Canvas::setTool(Tool value) {
     if (floating_ && value != Tool::Move)
         commitFloatingSelection();
+    if (value != Tool::Move)
+        commitPendingDistortion();
     if (value != session_->tool) {
         finishTextEditing(true);
         cancelInteraction();

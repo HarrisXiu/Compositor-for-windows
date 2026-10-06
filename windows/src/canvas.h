@@ -63,6 +63,17 @@ class Canvas : public QWidget {
     void beginSelectionTransform();
     void commitFloatingSelection();
     void cancelFloatingSelection();
+    // A distortion stays waiting once its handle is let go, as on the Mac: its handles keep
+    // reshaping it (a drag elsewhere moves it whole) and the pixels are resampled once, when it
+    // is applied with Enter or by another command. Escape, Undo and Redo abandon it. Committing
+    // or canceling a floating selection does the same to a distortion of it first.
+    void commitPendingDistortion();
+    void cancelPendingDistortion();
+    // The "handle" of a drag that moves a waiting distortion whole, after the eight on its box.
+    static constexpr int DistortBodyHandle = 9;
+    bool hasPendingDistortion() const {
+        return pendingDistortion_;
+    }
     bool hasFloatingSelection() const {
         return floating_.has_value();
     }
@@ -229,7 +240,7 @@ class Canvas : public QWidget {
     QJsonObject transformDraft_;
     QVector<QPointF> distortStart_, distortCorners_;
     QRectF moveFrame_;
-    bool distorting_ = false, duplicating_ = false;
+    bool distorting_ = false, duplicating_ = false, pendingDistortion_ = false;
     QImage cloneSample_;
     QTransform cloneSamplePlacement_;
     Layer paintBefore_;
@@ -288,7 +299,13 @@ class Canvas : public QWidget {
                                Qt::KeyboardModifiers modifiers, const QStringList &ids) const;
     void applyTransform(const QJsonObject &draft);
     void updateDistort(QPointF point, Qt::KeyboardModifiers modifiers);
+    // The distorted layers, at most `limit` pixels across (0: full size), from their originals.
+    QHash<QString, Layer> distortedLayers(double limit) const;
     void applyDistortion(double limit);
+    // A distortion's handle let go: the document goes back to the originals and the canvas shows
+    // the distortion over them until it is applied or abandoned.
+    void holdDistortion();
+    void resumeDistortion(int handle);
     void endTransform();
     void drawTransformControls(QPainter &painter);
     // The Move tool's drag: the selected layers, a folder's contents with it, or a mask alone.

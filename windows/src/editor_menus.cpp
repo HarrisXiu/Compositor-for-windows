@@ -79,11 +79,12 @@ void EditorWindow::buildMenus() {
     });
     action(file, "Exit", QKeySequence("Alt+F4"), [this] { close(); });
     auto edit = menuBar()->addMenu("&Edit");
-    // Undo and Redo during a transform of selected pixels abandon it, as Escape does.
+    // Undo and Redo during a transform of selected pixels, or a waiting distortion, abandon it, as
+    // Escape does.
     action(edit, "Undo", QKeySequence::Undo, [this] {
         if (page()) {
             page()->canvas->finishTextEditing(true);
-            if (page()->canvas->hasFloatingSelection()) {
+            if (page()->canvas->hasFloatingSelection() || page()->canvas->hasPendingDistortion()) {
                 page()->canvas->cancelFloatingSelection();
                 return;
             }
@@ -94,7 +95,7 @@ void EditorWindow::buildMenus() {
     action(edit, "Redo", QKeySequence::Redo, [this] {
         if (page()) {
             page()->canvas->finishTextEditing(true);
-            if (page()->canvas->hasFloatingSelection()) {
+            if (page()->canvas->hasFloatingSelection() || page()->canvas->hasPendingDistortion()) {
                 page()->canvas->cancelFloatingSelection();
                 return;
             }

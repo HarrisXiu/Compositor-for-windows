@@ -228,8 +228,9 @@ class TransformTests : public QObject {
         ready(p);
         const auto before = p.document.manifest();
         const auto image = p.document.active()->image;
-        // The 16-pixel layer's top-right corner pulled down 8 pixels.
+        // The 16-pixel layer's top-right corner pulled down 8 pixels, then applied with Enter.
         drag(p, {16, 0}, {16, 8}, Qt::ControlModifier);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
         QCOMPARE(p.history.count(), 1);
         QCOMPARE(p.history.undoText(), QString("Distort"));
         QVERIFY(p.document.active()->image != image);
@@ -242,6 +243,54 @@ class TransformTests : public QObject {
         QCOMPARE(p.document.manifest(), before);
         QCOMPARE(p.document.active()->image, image);
         p.history.redo();
+        QVERIFY(p.document.active()->image != image);
+    }
+    void aDistortionWaitsUntilAppliedAndKeepsReshaping() {
+        // As on the Mac: a distortion waits once its handle is let go, its handles keep
+        // distorting without Ctrl, and the pixels are resampled once, when it is applied.
+        EditorPage p(twoLayers());
+        p.document.metadata["activeLayerID"] = p.document.layers[0].id();
+        p.session.selectedLayerIDs = {p.document.layers[0].id()};
+        ready(p);
+        const auto before = p.document.manifest();
+        const auto image = p.document.active()->image;
+        drag(p, {16, 0}, {16, 8}, Qt::ControlModifier);
+        QVERIFY(p.canvas->hasPendingDistortion());
+        QVERIFY(p.canvas->hasLivePreview()); // Shown on the canvas, not yet made.
+        QCOMPARE(p.history.count(), 0);
+        QCOMPARE(p.document.manifest(), before);
+        QCOMPARE(p.document.active()->image, image);
+        // The bottom-right handle, dragged without Ctrl, keeps distorting.
+        drag(p, {16, 16}, {24, 16});
+        QVERIFY(p.canvas->hasPendingDistortion());
+        // A drag away from the handles moves the whole shape.
+        drag(p, {40, 40}, {44, 40});
+        QCOMPARE(p.history.count(), 0);
+        QCOMPARE(p.document.active()->image, image);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
+        QVERIFY(!p.canvas->hasPendingDistortion());
+        QVERIFY(!p.canvas->hasLivePreview());
+        QCOMPARE(p.history.count(), 1);
+        QCOMPARE(p.history.undoText(), QString("Distort"));
+        const auto box = boxOf(*p.document.active());
+        QVERIFY2(std::abs(box.left() - 4) <= 1 && std::abs(box.right() - 28) <= 1,
+                 qPrintable(QString("%1 %2").arg(box.left()).arg(box.right())));
+        // Full resolution: the layer was not left at a preview size.
+        QVERIFY(p.document.active()->image.width() >= 23);
+        p.history.undo();
+        QCOMPARE(p.document.manifest(), before);
+        // Escape abandons a waiting distortion.
+        drag(p, {16, 0}, {16, 8}, Qt::ControlModifier);
+        QTest::keyClick(p.canvas, Qt::Key_Escape);
+        QVERIFY(!p.canvas->hasPendingDistortion());
+        QVERIFY(!p.canvas->hasLivePreview());
+        QCOMPARE(p.document.manifest(), before);
+        QCOMPARE(p.document.active()->image, image);
+        // Choosing another tool applies it.
+        drag(p, {16, 0}, {16, 8}, Qt::ControlModifier);
+        p.canvas->setTool(Tool::Brush);
+        QVERIFY(!p.canvas->hasPendingDistortion());
+        QCOMPARE(p.history.undoText(), QString("Distort"));
         QVERIFY(p.document.active()->image != image);
     }
     void distortingCanBeCanceledAndNeedsAMove() {
@@ -305,6 +354,7 @@ class TransformTests : public QObject {
         ready(p);
         // The box's bottom-right corner pulled right: both layers lean with it.
         drag(p, {64, 16}, {80, 16}, Qt::ControlModifier);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
         QCOMPARE(p.history.undoText(), QString("Distort Layers"));
         QVERIFY(boxOf(*p.document.find(b)).right() > 64);
         QVERIFY(boxOf(*p.document.find(a)).right() < boxOf(*p.document.find(b)).right());
@@ -338,6 +388,7 @@ class TransformTests : public QObject {
         if (qEnvironmentVariableIsSet("COMPOSITOR_TRANSFORM_SCREENSHOT"))
             shot.save(qEnvironmentVariable("COMPOSITOR_TRANSFORM_SCREENSHOT"));
         mouse(p.canvas, QEvent::MouseButtonRelease, at(p, 84, 28), Qt::ControlModifier);
+        QTest::keyClick(p.canvas, Qt::Key_Return);
         QCOMPARE(p.history.undoText(), QString("Distort Layers"));
     }
     void aFoldersContentsTransformTogether() {

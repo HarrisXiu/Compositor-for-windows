@@ -67,6 +67,8 @@ void Canvas::beginSelectionTransform() {
     update();
 }
 void Canvas::commitFloatingSelection() {
+    // A distortion waiting on the floating pixels (or on layers) is applied first.
+    commitPendingDistortion();
     if (!floating_)
         return;
     cancelInteraction();
@@ -94,6 +96,7 @@ void Canvas::commitFloatingSelection() {
     emit selectionChanged();
 }
 void Canvas::cancelFloatingSelection() {
+    cancelPendingDistortion();
     if (!floating_)
         return;
     cancelInteraction();

@@ -286,11 +286,20 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
     }
     if (inputLocked_ && key != Qt::Key_Space)
         return true;
+    // Any other key that edits (a nudge, an opacity digit) applies a waiting distortion first.
+    if (pendingDistortion_ && !dragging_ && key != Qt::Key_Escape && key != Qt::Key_Return &&
+        key != Qt::Key_Enter && key != Qt::Key_Space && key != Qt::Key_Shift &&
+        key != Qt::Key_Control && key != Qt::Key_Alt && key != Qt::Key_Meta)
+        commitPendingDistortion();
     if (controller().keyPress(e))
         return true;
     if (key == Qt::Key_Escape) {
         if (floating_ && !dragging_) {
             cancelFloatingSelection();
+            return true;
+        }
+        if (pendingDistortion_ && !dragging_) {
+            cancelPendingDistortion();
             return true;
         }
         controller().cancel();
@@ -301,6 +310,10 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
     if ((key == Qt::Key_Return || key == Qt::Key_Enter) && mods == Qt::NoModifier) {
         if (floating_ && !dragging_) {
             commitFloatingSelection();
+            return true;
+        }
+        if (pendingDistortion_ && !dragging_) {
+            commitPendingDistortion();
             return true;
         }
         if (dragging_) {
@@ -430,6 +443,19 @@ bool Canvas::handleCanvasKey(QKeyEvent *input) {
 bool Canvas::beginOverlayEdit(QMouseEvent *e) {
     if (temporaryPan_ || temporaryPicker_)
         return false;
+    // A waiting distortion takes every drag, as on the Mac: its handles keep distorting (Ctrl is
+    // no longer needed) and a drag anywhere else moves the whole shape.
+    if (pendingDistortion_) {
+        const auto points = handlePoints(distortCorners_, false);
+        int handle = DistortBodyHandle;
+        for (int i = 0; i < 8; ++i)
+            if (QLineF(points[i], e->position()).length() <= 7) {
+                handle = i;
+                break;
+            }
+        resumeDistortion(handle);
+        return true;
+    }
     auto guides = document_->metadata.value("guides").toArray();
     bool fromHorizontal =
         session_->view.rulers && e->position().y() < 24 && e->position().x() >= 24;
@@ -552,17 +578,17 @@ bool Canvas::finishOverlayEdit(QMouseEvent *e) {
                             : "Transform Layer";
         if (distorting_) {
             updateDistort(toDocument(e->position()), e->modifiers());
-            // A handle let go where it was grabbed distorts nothing.
-            if (distortCorners_ == distortStart_) {
+            // A handle let go where it was grabbed, the box still square, distorts nothing.
+            if (distortCorners_ == transformCorners(transformSubject_.box)) {
                 restoreGesture();
                 endTransform();
                 if (!floating_)
                     emit editCanceled();
                 return true;
             }
-            applyDistortion(0);
-            label = transformSubject_.kind == TransformSubject::Kind::Group ? "Distort Layers"
-                                                                           : "Distort";
+            // Otherwise the distortion waits to be applied (see commitPendingDistortion).
+            holdDistortion();
+            return true;
         } else
             moveOverlayEdit(e);
         endTransform();

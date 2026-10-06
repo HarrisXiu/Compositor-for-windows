@@ -24,8 +24,11 @@ bool shown(const Document &document, const Layer &layer) {
             return false;
     return true;
 }
-// A corner of the box moves the handle's corner, an edge handle both corners of that edge.
+// A corner of the box moves the handle's corner, an edge handle both corners of that edge, and a
+// drag of the body all four.
 QVector<int> distortedCorners(int handle) {
+    if (handle == Canvas::DistortBodyHandle)
+        return {0, 1, 2, 3};
     return handle % 2 == 0 ? QVector<int>{handle / 2}
                            : QVector<int>{handle / 2, (handle / 2 + 1) % 4};
 }
@@ -234,12 +237,10 @@ void Canvas::updateDistort(QPointF point, Qt::KeyboardModifiers mods) {
     if (distortUsable(next))
         distortCorners_ = next;
 }
-void Canvas::applyDistortion(double limit) {
+QHash<QString, Layer> Canvas::distortedLayers(double limit) const {
     const auto &subject = transformSubject_;
+    QHash<QString, Layer> result;
     for (const auto &id : subject.ids) {
-        auto *layer = document_->find(id);
-        if (!layer)
-            continue;
         Layer copy = transformOriginals_.value(id);
         const auto transform = copy.transform();
         const auto corners = subject.kind == TransformSubject::Kind::Group
@@ -247,10 +248,70 @@ void Canvas::applyDistortion(double limit) {
                                  : distortCorners_;
         if (distortUsable(corners))
             distortLayer(copy, transform, corners, limit);
-        *layer = copy;
+        result[id] = copy;
     }
+    return result;
+}
+void Canvas::applyDistortion(double limit) {
+    const auto distorted = distortedLayers(limit);
+    for (auto it = distorted.cbegin(); it != distorted.cend(); ++it)
+        if (auto *layer = document_->find(it.key()))
+            *layer = it.value();
     emit edited();
     refresh();
+}
+void Canvas::holdDistortion() {
+    // Warped once, at the preview size the drag used; panning and zooming only swap them in.
+    const auto preview = distortedLayers(1280);
+    restoreGesture();
+    transformHandle_ = -1;
+    distorting_ = false;
+    pendingDistortion_ = true;
+    setLivePreview([preview](Document &d) {
+        for (auto it = preview.cbegin(); it != preview.cend(); ++it)
+            if (auto *layer = d.find(it.key()))
+                *layer = it.value();
+    });
+    emit edited();
+}
+void Canvas::resumeDistortion(int handle) {
+    clearLivePreview();
+    pendingDistortion_ = false;
+    transformHandle_ = handle;
+    distorting_ = true;
+    distortStart_ = distortCorners_;
+    dragging_ = true;
+}
+void Canvas::commitPendingDistortion() {
+    if (!pendingDistortion_)
+        return;
+    pendingDistortion_ = false;
+    clearLivePreview();
+    const QString label =
+        transformSubject_.kind == TransformSubject::Kind::Group ? "Distort Layers" : "Distort";
+    try {
+        applyDistortion(0);
+    } catch (const std::exception &ex) {
+        restoreGesture();
+        endTransform();
+        if (!floating_)
+            emit editCanceled();
+        emit error(QString::fromUtf8(ex.what()));
+        return;
+    }
+    endTransform();
+    finishEdit(label);
+}
+void Canvas::cancelPendingDistortion() {
+    if (!pendingDistortion_)
+        return;
+    pendingDistortion_ = false;
+    clearLivePreview();
+    restoreGesture();
+    endTransform();
+    if (!floating_)
+        emit editCanceled();
+    emit edited();
 }
 void Canvas::endTransform() {
     transformHandle_ = -1;
@@ -267,7 +328,7 @@ void Canvas::drawTransformControls(QPainter &p) {
         return;
     QVector<QPointF> corners;
     bool rotation = true;
-    if (transformHandle_ >= 0 && distorting_) {
+    if ((transformHandle_ >= 0 && distorting_) || pendingDistortion_) {
         corners = distortCorners_;
         rotation = false;
     } else if (transformHandle_ >= 0 && !transformDraft_.isEmpty()) {

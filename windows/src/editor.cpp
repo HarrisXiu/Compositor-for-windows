@@ -98,6 +98,11 @@ QAction *EditorWindow::action(QMenu *menu, const QString &title, const QKeySeque
             // While a filter's result is being made, only the view can change.
             if (applyingFilter_ && !a->property("keepsLiveDialog").toBool())
                 return;
+            // A waiting distortion is applied before any other command but the view's (Undo and
+            // Redo abandon it instead), as on the Mac.
+            const auto title = a->property("layerAction").toString();
+            if (page() && !a->property("keepsLiveDialog").toBool() && title != "Undo" && title != "Redo")
+                page()->canvas->commitPendingDistortion();
             if (aiSelectionDialog_)
                 aiSelectionDialog_->reject();
             // Any command but changing the view leaves the dialog and what it previews behind.
