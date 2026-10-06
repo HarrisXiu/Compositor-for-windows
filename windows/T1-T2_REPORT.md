@@ -11,7 +11,7 @@ New code: `distort.cpp/.h` (distortion, corner and transform algebra), `canvas_t
 
 ## Differences from the Mac app
 
-- A distortion is applied when the handle is released rather than staying pending until Apply, so repeated distortions resample the pixels each time. A persistent pending distortion, and distorting an unlinked mask alone, are not implemented.
+- ~~A distortion is applied when the handle is released~~: since `feature/parity-gaps` it waits until applied, as on the Mac (see [parity follow-up](PARITY_GAPS_REPORT.md)). Distorting an unlinked mask alone is not implemented; the Mac does not support it either.
 - Members of a folder transform even when hidden; the box is drawn around the visible ones. Adjustment layers are not transformed by the handles (the Move tool and nudge still move them).
 - Ctrl on a handle now distorts; it no longer bypasses snapping during a resize (Move-tool dragging still does).
 

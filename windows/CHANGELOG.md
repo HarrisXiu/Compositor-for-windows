@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### 2026-10-05 — parity with the Mac app, version remains 0.4.0
+
+- Color Balance groups its sliders by tonal range with colored tracks; Black & White colors each family's track and shows Tint only when on; Gradient Map shows its two ends as a bar with swatches.
+- OK makes a filter's full-resolution result in the background, with the preview still on the canvas.
+- A mask placed apart from its layer keeps its edge tone (white or black) past its pixels, also when painted, blurred or distorted past them.
+- A distortion waits until applied: handles keep distorting, a drag elsewhere moves it, Enter or another command applies it once, Escape abandons it.
+- Layer-effect panels preview on the canvas and have sliders.
+- Selection outlines (and moved pixels' selections) come back whole after leaving the canvas.
+- Items not in the Mac app (mesh distort, Refine Edge, brush dynamics and others) are no longer listed as parity gaps. See [parity follow-up](PARITY_GAPS_REPORT.md).
+
 ### 2026-10-05 — AI model downloads, version remains 0.4.0
 
 - Published the five FP32 ONNX models (BiRefNet Lite, SAM 2 Hiera Tiny and MobileSAM) with their licenses and validation reports on the [`ai-models-v1` GitHub release](https://github.com/HarrisXiu/Compositor-for-windows/releases/tag/ai-models-v1).
