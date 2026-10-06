@@ -183,6 +183,36 @@ class SelectionTransformTests : public QObject {
         p.history.undo();
         QCOMPARE(selectedBounds(p.session.selection), QRect(8, 8, 16, 16));
     }
+    void anOutlineMovedOffTheCanvasComesBackWhole() {
+        // As on the Mac, the outline is not cut off at the canvas: moved back, it is whole again.
+        EditorPage p(pixelDocument());
+        ready(p);
+        const auto original = rectangleMask(p.document.size(), QRect(8, 8, 16, 16));
+        p.session.selection = original;
+        p.canvas->setTool(Tool::RectangleSelect);
+        // 20 pixels left: only columns 0 to 3 of it stay on the canvas.
+        drag(p, {20, 16}, {0, 16});
+        QCOMPARE(selectedBounds(p.session.selection), QRect(0, 8, 4, 16));
+        // Grabbed by what is left of it and dragged back.
+        drag(p, {2, 16}, {22, 16});
+        QCOMPARE(p.session.selection, original);
+        // Undo and Redo pass through the same states, each whole.
+        p.history.undo();
+        QCOMPARE(selectedBounds(p.session.selection), QRect(0, 8, 4, 16));
+        p.history.undo();
+        QCOMPARE(p.session.selection, original);
+        p.history.redo();
+        p.history.redo();
+        QCOMPARE(p.session.selection, original);
+        // Arrow nudges keep it too: ten pixels at a time, off the top and back.
+        p.canvas->setFocus();
+        for (int i = 0; i < 2; ++i)
+            QTest::keyClick(p.canvas, Qt::Key_Up, Qt::ShiftModifier);
+        QCOMPARE(selectedBounds(p.session.selection), QRect(8, 0, 16, 4));
+        for (int i = 0; i < 2; ++i)
+            QTest::keyClick(p.canvas, Qt::Key_Down, Qt::ShiftModifier);
+        QCOMPARE(p.session.selection, original);
+    }
     void escapeDuringAnOutlineDragPutsTheSelectionBack() {
         EditorPage p(pixelDocument());
         ready(p);

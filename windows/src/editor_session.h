@@ -2,7 +2,10 @@
 #pragma once
 #include "canvas_layout.h"
 #include <QColor>
+#include <QHash>
 #include <QImage>
+#include <QList>
+#include <QPoint>
 #include <QRectF>
 #include <QSet>
 
@@ -33,11 +36,24 @@ enum class Tool {
 };
 enum class EditTarget { Pixels, Mask };
 
+// A selection whole, past the canvas too: an 8-bit coverage image and its top-left on the
+// document, in pixels.
+struct SelectionOutline {
+    QImage image;
+    QPoint origin;
+};
+
 // Per-project interaction state; deliberately excluded from the .comp manifest.
 struct EditorSession {
     QSet<QString> selectedLayerIDs;
     QSet<QString> collapsedLayerIDs;
     QImage selection;
+    // As on the Mac, a selection moved partly off the canvas keeps what left it, so moving it back
+    // restores it: the whole, by the cacheKey of the canvas-sized part `selection` (and the history)
+    // holds. Any other change to the selection is a new image and leaves them behind. Bounded in
+    // memory, newest kept (see movedSelection).
+    QHash<qint64, SelectionOutline> outlines;
+    QList<qint64> outlineOrder;
     QRectF cropFrame;
     QRectF cropBeforeGesture;
     double cropRatio = 0;

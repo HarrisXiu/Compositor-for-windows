@@ -179,6 +179,8 @@ class Canvas : public QWidget {
     Tool controllerKind_ = Tool::Move;
     bool temporaryPan_ = false;
     QImage original_, coverage_, priorSelection_, blurred_;
+    // The selection whole when a drag inside it began, past the canvas too.
+    SelectionOutline dragWhole_;
     std::unique_ptr<WarpBrush> warp_;
     bool warpChanged_ = false;
     QPointF pan_, start_, last_, cloneSource_, cloneOffset_;

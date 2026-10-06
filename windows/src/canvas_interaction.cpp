@@ -168,12 +168,10 @@ void Canvas::nudge(QPointF delta, bool pixels) {
          session_->tool == Tool::Lasso || session_->tool == Tool::Wand)) {
         if (session_->selection.isNull())
             return;
-        QImage next(document_->size(), QImage::Format_RGBA8888_Premultiplied);
-        next.fill(Qt::transparent);
-        QPainter p(&next);
-        p.drawImage(delta, session_->selection);
-        p.end();
-        replaceSelection(next.convertToFormat(QImage::Format_Grayscale8), "Move Selection");
+        // What the nudge takes past the canvas comes back with the next one, as on the Mac.
+        replaceSelection(movedSelection(*session_, wholeSelection(*session_), delta.toPoint(),
+                                        document_->size()),
+                         "Move Selection");
         return;
     }
     auto l = document_->active();
@@ -193,8 +191,8 @@ void Canvas::nudge(QPointF delta, bool pixels) {
         }
         document_->find(id)->move(delta);
         mergeFloatingLayer(*document_, id, sourceId);
-        session_->selection =
-            shiftSelection(session_->selection, QPoint(int(delta.x()), int(delta.y())));
+        session_->selection = movedSelection(*session_, wholeSelection(*session_), delta.toPoint(),
+                                             document_->size());
         emit editFinished("Move Selected Pixels");
         emit selectionChanged();
         refresh();
@@ -235,12 +233,8 @@ void Canvas::nudge(QPointF delta, bool pixels) {
             l->metadata.remove("text");
             l->metadata.remove("shape");
         }
-        QImage selection(document_->size(), QImage::Format_RGBA8888_Premultiplied);
-        selection.fill(Qt::transparent);
-        QPainter s(&selection);
-        s.drawImage(delta, session_->selection);
-        s.end();
-        session_->selection = selection.convertToFormat(QImage::Format_Grayscale8);
+        session_->selection = movedSelection(*session_, wholeSelection(*session_), delta.toPoint(),
+                                             document_->size());
         emit editFinished("Move Selected Pixels");
         emit selectionChanged();
         refresh();

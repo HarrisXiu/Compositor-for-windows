@@ -89,6 +89,49 @@ QImage shiftSelection(const QImage &selection, QPoint offset) {
     return out;
 }
 
+SelectionOutline wholeSelection(const EditorSession &session) {
+    if (session.selection.isNull())
+        return {};
+    if (auto it = session.outlines.constFind(session.selection.cacheKey());
+        it != session.outlines.cend())
+        return *it;
+    return {session.selection, {}};
+}
+QImage movedSelection(EditorSession &session, const SelectionOutline &whole, QPoint offset,
+                      QSize canvas, bool remember) {
+    if (whole.image.isNull())
+        return {};
+    const QPoint origin = whole.origin + offset;
+    QImage part(canvas, QImage::Format_Grayscale8);
+    require(!part.isNull(), "Not enough memory for selection");
+    part.fill(0);
+    const auto shown = QRect(origin, whole.image.size()) & QRect(QPoint(), canvas);
+    for (int y = shown.top(); y <= shown.bottom(); ++y)
+        std::memcpy(part.scanLine(y) + shown.left(),
+                    whole.image.constScanLine(y - origin.y()) + (shown.left() - origin.x()),
+                    size_t(shown.width()));
+    if (!remember)
+        return part;
+    const auto covered = coveredBounds(whole.image);
+    if (covered.isEmpty() || QRect(QPoint(), canvas).contains(covered.translated(origin)))
+        return part;
+    // Only what it covers is kept, so a selection mostly past the canvas costs no more than that.
+    const auto key = part.cacheKey();
+    session.outlines.insert(key, {whole.image.copy(covered), origin + covered.topLeft()});
+    session.outlineOrder.removeAll(key);
+    session.outlineOrder.append(key);
+    qint64 total = 0;
+    for (const auto &kept : std::as_const(session.outlines))
+        total += kept.image.sizeInBytes();
+    constexpr qint64 Budget = 256LL * 1024 * 1024;
+    while (session.outlineOrder.size() > 1 && total > Budget) {
+        const auto oldest = session.outlineOrder.takeFirst();
+        total -= session.outlines.value(oldest).image.sizeInBytes();
+        session.outlines.remove(oldest);
+    }
+    return part;
+}
+
 QString liftSelection(Document &document, const QString &sourceId, const QImage &selection,
                       bool duplicate) {
     require(selection.size() == document.size() && selection.format() == QImage::Format_Grayscale8,

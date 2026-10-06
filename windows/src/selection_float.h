@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "document.h"
+#include "editor_session.h"
 #include <QImage>
 #include <QPoint>
 
@@ -13,6 +14,13 @@ namespace compositor {
 
 // `selection` (canvas-sized, 8-bit) moved by whole pixels; what leaves the canvas is lost.
 QImage shiftSelection(const QImage &selection, QPoint offset);
+// The session's selection whole: past the canvas too when a move took some of it there.
+SelectionOutline wholeSelection(const EditorSession &session);
+// `whole` moved by whole pixels: its part on a `canvas`-sized selection. With `remember`, what
+// lies past the canvas is kept with `session`, for the selection the result becomes, so moving
+// it back (or undoing to it) restores it, as on the Mac; while dragging, nothing is kept yet.
+QImage movedSelection(EditorSession &session, const SelectionOutline &whole, QPoint offset,
+                      QSize canvas, bool remember = true);
 // Lifts the pixels `selection` covers on the pixel layer `sourceId` onto a new layer just above it
 // and returns that layer's ID, or an empty string when the selection covers none of the layer. The
 // source loses the lifted pixels (in proportion to the selection's coverage) unless `duplicate`.

@@ -125,6 +125,7 @@ bool Canvas::beginSelectionDrag(QMouseEvent *e) {
     if (!pixels && ((modifiers & (Qt::ShiftModifier | Qt::AltModifier)) || session_->selectionMode != 0))
         return false;
     priorSelection_ = session_->selection;
+    dragWhole_ = wholeSelection(*session_);
     dragOffset_ = {};
     if (!pixels) {
         selectionDrag_ = SelectionDrag::Outline;
@@ -174,7 +175,8 @@ void Canvas::updateSelectionDrag(QMouseEvent *e) {
         return;
     dragOffset_ = offset;
     if (selectionDrag_ == SelectionDrag::Outline) {
-        session_->selection = shiftSelection(priorSelection_, offset);
+        // Not cut off at the canvas: dragged back, the outline comes back whole.
+        session_->selection = movedSelection(*session_, dragWhole_, offset, document_->size(), false);
         update();
     } else
         moveSelectedPixels(offset);
@@ -184,7 +186,9 @@ void Canvas::finishSelectionDrag(QMouseEvent *event) {
     const auto offset = std::exchange(dragOffset_, QPoint());
     const auto prior = std::exchange(priorSelection_, QImage());
     if (kind == SelectionDrag::Outline) {
-        const auto after = session_->selection;
+        const auto after = offset != QPoint()
+                               ? movedSelection(*session_, dragWhole_, offset, document_->size())
+                               : session_->selection;
         session_->selection = prior;
         if (offset != QPoint())
             replaceSelection(after, "Move Selection");
@@ -204,7 +208,7 @@ void Canvas::finishSelectionDrag(QMouseEvent *event) {
         return;
     }
     mergeFloatingLayer(*document_, dragFloatingId_, dragSourceId_);
-    session_->selection = shiftSelection(prior, offset);
+    session_->selection = movedSelection(*session_, dragWhole_, offset, document_->size());
     session_->selectedLayerIDs = {dragSourceId_};
     endLayerEdit();
     emit editFinished(dragDuplicate_ ? "Duplicate Selected Pixels" : "Move Selected Pixels");
