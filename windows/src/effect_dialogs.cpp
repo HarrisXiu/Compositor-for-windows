@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "editor.h"
 #include "effects.h"
+#include "parameter_control.h"
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -20,6 +21,7 @@ void EditorWindow::editEffect(const QString &key) {
         return;
     auto layer = p->document.active();
     require(layer && !layer->image.isNull(), "Select an image layer");
+    const auto id = layer->id();
     auto all = layer->metadata.value("effects").toObject();
     auto e = all.value(key).toObject();
     bool glow = key == "outerGlow" || key == "innerGlow",
@@ -33,71 +35,65 @@ void EditorWindow::editEffect(const QString &key) {
              {"opacity", glow     ? .75
                          : shadow ? .5
                                   : 1}};
-    QDialog dialog(this);
+    // As on the Mac, the effect previews on the canvas itself while the panel stays open beside it.
+    QDialog dialog(this, Qt::Tool);
+    dialog.setObjectName("filterDialog");
     dialog.setWindowTitle("Layer Effect: " + key);
     auto layout = new QVBoxLayout(&dialog);
     auto form = new QFormLayout;
     layout->addLayout(form);
-    auto preview = new QLabel;
-    preview->setAlignment(Qt::AlignCenter);
-    preview->setMinimumSize(256, 160);
-    layout->addWidget(preview);
-    auto source = layer->image.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    double scale = double(source.width()) / layer->image.width();
     QTimer timer;
     timer.setSingleShot(true);
+    // The layer with the effect as it stands, drawn in the canvas's copy of the document only.
     auto refresh = [&] {
-        try {
-            auto scaled = e;
-            for (auto field : {"size", "blur", "distance"})
-                if (scaled.contains(QLatin1String(field)))
-                    scaled[QLatin1String(field)] =
-                        scaled.value(QLatin1String(field)).toDouble() * scale;
-            auto image = renderEffects(source, {{key, scaled}}).image;
-            preview->setPixmap(QPixmap::fromImage(
-                image.scaled(360, 300, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-        } catch (const std::exception &error) {
-            preview->setText(QString::fromUtf8(error.what()));
-        }
+        p->canvas->setLivePreview(
+            [id, key, effect = e](Document &d) {
+                if (auto *l = d.find(id)) {
+                    auto effects = l->metadata.value("effects").toObject();
+                    effects[key] = effect;
+                    l->metadata["effects"] = effects;
+                }
+            },
+            {}, id);
     };
     connect(&timer, &QTimer::timeout, &dialog, refresh);
     auto number = [&](const char *field, const QString &label, double initial, double low,
-                      double high) {
-        auto spin = new QDoubleSpinBox;
-        spin->setRange(low, high);
-        spin->setDecimals(2);
-        spin->setValue(e.value(QLatin1String(field)).toDouble(initial));
-        e[QLatin1String(field)] = spin->value();
-        form->addRow(label, spin);
-        connect(spin, &QDoubleSpinBox::valueChanged, &dialog, [&, field](double v) {
+                      double high, int decimals) {
+        auto parameter = new ParameterControl(
+            low, high, decimals, e.value(QLatin1String(field)).toDouble(initial), initial);
+        addParameter(form, label, parameter, QString::fromLatin1(field) + "Control");
+        e[QLatin1String(field)] = parameter->value();
+        connect(parameter->spin(), &QDoubleSpinBox::valueChanged, &dialog, [&, field](double v) {
             e[QLatin1String(field)] = v;
-            timer.start(100);
+            timer.start(60);
         });
     };
     auto check = [&](const char *field, const QString &label, bool initial) {
         auto box = new QCheckBox(label);
+        box->setObjectName(QString::fromLatin1(field) + "Control");
         box->setChecked(e.value(QLatin1String(field)).toBool(initial));
         e[QLatin1String(field)] = box->isChecked();
         form->addRow(box);
         connect(box, &QCheckBox::toggled, &dialog, [&, field](bool v) {
             e[QLatin1String(field)] = v;
-            timer.start(100);
+            timer.start(60);
         });
     };
     check("enabled", "Enabled", true);
-    number("opacity", "Opacity", 1, 0, 1);
+    number("opacity", "Opacity", 1, 0, 1, 2);
     if (key == "stroke") {
-        number("size", "Width", 4, 0, 500);
+        number("size", "Width", 4, 0, 500, 1);
         check("inside", "Inside", false);
     }
     if (glow)
-        number("size", "Size", inner ? 10 : 20, 0, 500);
+        number("size", "Size", inner ? 10 : 20, 0, 500, 1);
     if (shadow) {
-        number("angle", "Light angle", 90, -360, 360);
-        number("distance", "Distance", inner ? 10 : 20, 0, 5000);
-        number("blur", "Blur", inner ? 10 : 20, 0, 500);
+        number("angle", "Light angle", 90, -360, 360, 0);
+        number("distance", "Distance", inner ? 10 : 20, 0, 5000, 1);
+        number("blur", "Blur", inner ? 10 : 20, 0, 500, 1);
     }
     auto color = new QPushButton("Color…");
+    color->setObjectName("effectColor");
     form->addRow(color);
     connect(color, &QPushButton::clicked, &dialog, [&] {
         auto c = QColorDialog::getColor(QColor::fromRgbF(e.value("red").toDouble(),
@@ -108,12 +104,13 @@ void EditorWindow::editEffect(const QString &key) {
             e["red"] = c.redF();
             e["green"] = c.greenF();
             e["blue"] = c.blueF();
-            timer.start(100);
+            timer.start(60);
         }
     });
     bool remove = false;
     auto buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     auto removeButton = buttons->addButton("Remove", QDialogButtonBox::DestructiveRole);
+    removeButton->setObjectName("removeEffect");
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -122,8 +119,13 @@ void EditorWindow::editEffect(const QString &key) {
         dialog.accept();
     });
     refresh();
-    if (dialog.exec() != QDialog::Accepted)
+    const bool accepted = runLiveDialog(dialog);
+    timer.stop();
+    p->canvas->clearLivePreview();
+    if (!accepted)
         return;
+    // Nothing else could have been edited meanwhile; check all the same.
+    require(page() == p && p->document.activeId() == id, "The layer changed while the dialog was open");
     p->edit(remove ? "Remove Effect" : "Edit Effect", [&](Document &d) {
         auto effects = d.active()->metadata.value("effects").toObject();
         if (remove)

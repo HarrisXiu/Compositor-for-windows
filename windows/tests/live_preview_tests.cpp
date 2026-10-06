@@ -382,6 +382,56 @@ class LivePreviewTests : public QObject {
         page->history.undo();
         QCOMPARE(page->document.active()->image, before);
     }
+    void aLayerEffectPreviewsOnTheCanvas() {
+        // As on the Mac, an effect's panel stays open beside the window and the effect shows on
+        // the canvas as it changes; OK records it as one step, Cancel leaves nothing.
+        auto d = Document::create({64, 64});
+        QImage red(32, 32, QImage::Format_RGBA8888_Premultiplied);
+        red.fill(Qt::red);
+        d.addImage("Red", red);
+        QTemporaryDir dir;
+        std::unique_ptr<EditorWindow> window(openWindow(dir, d));
+        auto page = currentPage(*window);
+        page->canvas->zoomTo(4);
+        page->canvas->waitForRendering();
+        const auto below = shown(*page, 16, 44); // Empty canvas under the layer.
+        auto shadow = menuAction(*window, "Drop Shadow…");
+        QVERIFY(shadow);
+        for (bool accept : {false, true}) {
+            bool visited = false;
+            QTimer::singleShot(20, [&] {
+                auto dialog = qobject_cast<QDialog *>(activeLiveDialog());
+                QVERIFY(dialog);
+                auto closeAtEnd = qScopeGuard([dialog] {
+                    if (dialog->isVisible())
+                        dialog->reject();
+                });
+                QVERIFY(!dialog->isModal());
+                QVERIFY(page->canvas->inputLocked());
+                dialog->findChild<QDoubleSpinBox *>("distanceControl")->setValue(14);
+                dialog->findChild<QDoubleSpinBox *>("blurControl")->setValue(0);
+                dialog->findChild<QDoubleSpinBox *>("opacityControl")->setValue(1);
+                QTRY_VERIFY_WITH_TIMEOUT(shown(*page, 16, 44) != below, 5000);
+                QVERIFY(!page->document.active()->metadata.contains("effects"));
+                QCOMPARE(page->history.count(), 0);
+                visited = true;
+                accept ? dialog->accept() : dialog->reject();
+            });
+            shadow->trigger();
+            QVERIFY(visited);
+            QVERIFY(!page->canvas->hasLivePreview());
+            QVERIFY(!page->canvas->inputLocked());
+            if (!accept) {
+                QCOMPARE(page->history.count(), 0);
+                QCOMPARE(shown(*page, 16, 44), below);
+            }
+        }
+        QCOMPARE(page->history.count(), 1);
+        QCOMPARE(page->history.undoText(), QString("Edit Effect"));
+        const auto effect = page->document.active()->metadata.value("effects").toObject().value("shadow").toObject();
+        QCOMPARE(effect.value("distance").toDouble(), 14.0);
+        QVERIFY(shown(*page, 16, 44) != below);
+    }
     void okAppliesInTheBackgroundWithThePreviewStillShown() {
         // Big enough that the full-resolution blur takes a while.
         auto d = Document::create({1200, 1200});
